@@ -111,21 +111,25 @@ header of `src/sys/switch/switch_input.cpp`). The left stick moves, the right st
 looks, and **+** opens the menu. In menus, the left stick moves the cursor, **A**
 clicks, **B** goes back, and touching the screen clicks where you touch.
 
-Default binds (applied only to unbound keys, so rebinding is kept): ZR fire, ZL alt
-fire, B jump, A reload, Y spirit walk, X lighter, R/L and D-pad right/left
-next/previous weapon, L3 run, R3 zoom, D-pad up grenade, D-pad down crouch.
+Default scheme (modeled on current console shooters; applied only to unbound keys,
+so rebinding is kept): ZR fire, ZL alt fire, B jump, Y reload, X next weapon,
+A spirit walk, R grenade, L lighter, L3 sprint and R3 crouch (toggles), D-pad up
+zoom (toggle), down center view, right/left next/previous weapon. Schemes are
+versioned (`in_switchControlScheme`): on upgrade, keys still holding the previous
+default move to the new one.
 
 **-** toggles the console. While it is down, **A** opens the system keyboard to type
 a command, D-pad up/down walks the history, L/R scroll, and **B** or **-** close it.
 
 ## Next steps
 
-1. First boot on hardware reached the loading screen. It then died in
-   `LoadGameDLL` because `FindDLL` looked for a game module file (fixed:
-   `FindDLL` short-circuits the linked-in module on `__SWITCH__`).
-2. Audio: check which OpenAL Soft backend the devkitPro build uses.
-3. Default controller binds, and a software keyboard for the console.
-4. Performance on the Tegra X1: profile with `com_showFPS 1`, try `r_screenFraction`
-   (render scale) and dynamic resolution. SSAO and bloom default to off on Switch
-   (`OPENPREY_POSTFX_DEFAULT` in `RenderSystem_init.cpp`).
-5. Multiplayer: real sockets in `switch_net.cpp`.
+1. Performance on the Tegra X1. Hardware test at stock clocks: 22 fps at full
+   resolution, 43 fps at half (fill-rate bound; shadows cost ~10%). Dynamic
+   resolution is on by default on Switch: `r_dynamicResolution`,
+   `r_dynamicResolutionFPS` (30), `r_dynamicResolutionMin` (50), `r_renderScale`
+   (max, %). `com_showFPS 1` shows the 3D resolution in use. SSAO and bloom
+   default to off on Switch (`OPENPREY_POSTFX_DEFAULT`).
+2. Mesa 26 experiment (danfromtico/mesa-switch): newer nouveau NVC0 GL, optional
+   Zink (`MESA_SWITCH_GL_DRIVER=zink`) and GLthread (`MESA_SWITCH_GLTHREAD=1`).
+3. Audio: check which OpenAL Soft backend the devkitPro build uses.
+4. Multiplayer: real sockets in `switch_net.cpp`.
