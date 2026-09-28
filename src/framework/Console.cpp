@@ -496,6 +496,18 @@ float SCR_DrawFPS( float y ) {
 		w = strlen( s ) * localConsole.GetBigCharWidth();
 
 		Con_DrawBigStringExt( SCREEN_WIDTH - localConsole.GetBigCharWidth() * 0.5f - w, y + 2.0f, s, colorWhite, true );
+
+		// 3D render resolution when render scale / dynamic resolution is in use
+		const int renderScale = cvarSystem->GetCVarInteger( "r_renderScaleCurrent" );
+		if ( renderScale > 0 && ( renderScale < 100 || cvarSystem->GetCVarBool( "r_dynamicResolution" ) ) ) {
+			y += BIGCHAR_HEIGHT + 4;
+			s = va( "%ix%i %i%%",
+				renderSystem->GetScreenWidth() * renderScale / 100,
+				renderSystem->GetScreenHeight() * renderScale / 100,
+				renderScale );
+			w = strlen( s ) * localConsole.GetBigCharWidth();
+			Con_DrawBigStringExt( SCREEN_WIDTH - localConsole.GetBigCharWidth() * 0.5f - w, y + 2.0f, s, colorWhite, true );
+		}
 	}
 
 	return y + BIGCHAR_HEIGHT + 4;

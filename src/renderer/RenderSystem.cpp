@@ -33,6 +33,173 @@ If you have questions concerning this license or the applicable additional terms
 idRenderSystemLocal	tr;
 idRenderSystem	*renderSystem = &tr;
 
+/*
+=====================================================================================
+
+Render scale / dynamic resolution
+
+The frame is cropped (CropRenderSize) at BeginFrame so the 3D views render at a
+fraction of the screen. At EndFrame the cropped area is copied into _renderScale,
+the crop is undone, and the copy is drawn over the whole screen with
+postprocess/openprey_renderscale (basepy/materials/renderscale_openprey.mtr).
+The 2D UI queued during the frame is held back and drawn after the upscale,
+so it stays sharp and keeps the UI viewport.
+
+With r_dynamicResolution the scale follows the frame time between
+r_dynamicResolutionMin and r_renderScale to hold r_dynamicResolutionFPS.
+GPU cost is roughly proportional to the pixel count, so the scale moves by the
+square root of the frame time ratio.
+
+=====================================================================================
+*/
+
+#ifdef __SWITCH__
+// Tegra X1: 3D fill rate is the bottleneck (hardware test: half the resolution ~doubled the frame rate).
+#define RENDERSCALE_DYNAMIC_DEFAULT	"1"
+#else
+#define RENDERSCALE_DYNAMIC_DEFAULT	"0"
+#endif
+
+idCVar r_renderScale( "r_renderScale", "100", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "3D render resolution in percent of the screen (the maximum when r_dynamicResolution is on). The world is upscaled; the 2D UI stays at full resolution", 25, 100 );
+idCVar r_dynamicResolution( "r_dynamicResolution", RENDERSCALE_DYNAMIC_DEFAULT, CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "adjust the 3D render resolution between r_dynamicResolutionMin and r_renderScale to hold r_dynamicResolutionFPS" );
+idCVar r_dynamicResolutionFPS( "r_dynamicResolutionFPS", "30", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "frame rate dynamic resolution tries to hold", 15, 120 );
+idCVar r_dynamicResolutionMin( "r_dynamicResolutionMin", "50", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "lowest 3D render scale in percent for dynamic resolution", 25, 100 );
+idCVar r_renderScaleCurrent( "r_renderScaleCurrent", "100", CVAR_RENDERER | CVAR_ROM | CVAR_INTEGER, "3D render scale in use, in percent (read only)" );
+
+static const char * const	RENDERSCALE_MATERIAL = "postprocess/openprey_renderscale";
+static const char * const	RENDERSCALE_IMAGE = "_renderScale";
+
+static float		renderScaleDynamic = 1.0f;
+static float		renderScaleAvgFrameMsec = 0.0f;
+static int			renderScaleLastFrameTime = 0;
+static int			renderScaleLastAdjustTime = 0;
+static bool			renderScaleActive = false;		// this frame's 3D is cropped
+static idGuiModel *	renderScaleGuiModel = NULL;
+
+/*
+=====================
+R_UpdateRenderScale
+
+Returns the 3D render scale for the frame that is starting.
+=====================
+*/
+static float R_UpdateRenderScale( void ) {
+	const float maxScale = idMath::ClampFloat( 0.25f, 1.0f, r_renderScale.GetInteger() / 100.0f );
+
+	const int now = Sys_Milliseconds();
+	const int frameMsec = renderScaleLastFrameTime ? now - renderScaleLastFrameTime : 0;
+	renderScaleLastFrameTime = now;
+
+	if ( !r_dynamicResolution.GetBool() ) {
+		renderScaleDynamic = maxScale;
+		renderScaleAvgFrameMsec = 0.0f;
+		return maxScale;
+	}
+
+	const float minScale = idMath::ClampFloat( 0.25f, maxScale, r_dynamicResolutionMin.GetInteger() / 100.0f );
+
+	// ignore hitches (loading, saving) so one long frame does not drop the resolution
+	if ( frameMsec > 0 && frameMsec < 250 ) {
+		renderScaleAvgFrameMsec = ( renderScaleAvgFrameMsec > 0.0f ) ? renderScaleAvgFrameMsec * 0.9f + frameMsec * 0.1f : (float)frameMsec;
+	}
+
+	const float targetMsec = 1000.0f / idMath::ClampInt( 15, 120, r_dynamicResolutionFPS.GetInteger() );
+	if ( renderScaleAvgFrameMsec > 0.0f && now - renderScaleLastAdjustTime >= 250 ) {
+		const float ratio = targetMsec / renderScaleAvgFrameMsec;
+		if ( ratio < 0.95f || ratio > 1.15f ) {
+			// pixel count ~ GPU time: scale the side length by sqrt of the time ratio, halfway per step
+			const float desired = renderScaleDynamic * idMath::Sqrt( ratio );
+			renderScaleDynamic += ( desired - renderScaleDynamic ) * 0.5f;
+			renderScaleLastAdjustTime = now;
+		}
+	}
+
+	renderScaleDynamic = idMath::ClampFloat( minScale, maxScale, renderScaleDynamic );
+	return renderScaleDynamic;
+}
+
+/*
+=====================
+R_BeginRenderScale
+
+Called at BeginFrame, after the crop stack has been reset.
+=====================
+*/
+static void R_BeginRenderScale( void ) {
+	renderScaleActive = false;
+
+	const float scale = R_UpdateRenderScale();
+	const bool usable =
+		scale < 0.995f &&
+		tr.currentRenderCrop == 0 &&
+		r_screenFraction.GetInteger() == 100 &&
+		!cvarSystem->GetCVarBool( "g_lowresFullscreenFX" );	// would shrink the copy to 512x512
+
+	r_renderScaleCurrent.SetInteger( usable ? idMath::FtoiFast( scale * 100.0f + 0.5f ) : 100 );
+	if ( !usable ) {
+		return;
+	}
+
+	tr.CropRenderSize( idMath::FtoiFast( SCREEN_WIDTH * scale ), idMath::FtoiFast( SCREEN_HEIGHT * scale ) );
+	renderScaleActive = true;
+}
+
+/*
+=====================
+R_ResolveRenderScale
+
+Called at the start of EndFrame: upscales the cropped 3D to the full screen,
+then lets EndFrame emit the held-back 2D UI on top at full resolution.
+=====================
+*/
+static void R_ResolveRenderScale( void ) {
+	if ( !renderScaleActive ) {
+		return;
+	}
+	renderScaleActive = false;
+
+	if ( tr.currentRenderCrop != 1 ) {
+		// something left the crop stack unbalanced this frame; do not guess
+		return;
+	}
+
+	const idMaterial *material = declManager->FindMaterial( RENDERSCALE_MATERIAL, false );
+	if ( material == NULL ) {
+		static bool warned = false;
+		if ( !warned ) {
+			warned = true;
+			common->Warning( "r_renderScale: material '%s' is missing (basepr/materials); rendering at full resolution", RENDERSCALE_MATERIAL );
+		}
+		r_dynamicResolution.SetBool( false );
+		r_renderScale.SetInteger( 100 );
+		tr.UnCrop();
+		return;
+	}
+
+	if ( renderScaleGuiModel == NULL ) {
+		renderScaleGuiModel = new idGuiModel;
+		renderScaleGuiModel->Clear();
+	}
+
+	// hold back the 2D UI queued this frame; EndFrame emits it after the upscale
+	idGuiModel *uiModel = tr.guiModel;
+	tr.guiModel = renderScaleGuiModel;
+
+	tr.CaptureRenderToImage( RENDERSCALE_IMAGE );
+	tr.UnCrop();
+
+	const bool uiViewport = tr.GetUseUIViewportFor2D();
+	tr.SetUseUIViewportFor2D( false );	// the upscale covers the whole screen, not the UI viewport
+	tr.SetColor( colorWhite );
+	// the copy is bottom-up like the framebuffer, so the top of the screen samples t = 1
+	tr.DrawStretchPic( 0.0f, 0.0f, SCREEN_WIDTH, SCREEN_HEIGHT, 0.0f, 1.0f, 1.0f, 0.0f, material );
+	tr.guiModel->EmitFullScreen();
+	tr.guiModel->Clear();
+	tr.SetUseUIViewportFor2D( uiViewport );	// only flushes the (empty) upscale model
+
+	tr.guiModel = uiModel;
+}
+
 
 /*
 =====================
@@ -669,6 +836,9 @@ void idRenderSystemLocal::BeginFrame( int windowWidth, int windowHeight ) {
 		CropRenderSize( w, h );
 	}
 
+	// render scale / dynamic resolution (upscaled in EndFrame)
+	R_BeginRenderScale();
+
 
 	// this is the ONLY place this is modified
 	frameCount++;
@@ -722,6 +892,9 @@ void idRenderSystemLocal::EndFrame( int *frontEndMsec, int *backEndMsec ) {
 	if ( !glConfig.isInitialized ) {
 		return;
 	}
+
+	// upscale the render-scaled 3D before the 2D UI is emitted over it
+	R_ResolveRenderScale();
 
 	// close any gui drawing
 	guiModel->EmitFullScreen();

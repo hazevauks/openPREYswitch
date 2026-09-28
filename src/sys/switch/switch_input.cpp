@@ -14,7 +14,9 @@ Windows SDL3 backend (src/sys/win32/win_sdl3.cpp), so binds carry over:
 	ZR = JOY15 (right trigger)               ZL = JOY16 (left trigger)
 	+ = Escape (opens and closes the menu)   - = console key
 
-Default binds for those keys are in s_defaultBinds (fire, jump, reload, ...).
+Default binds for those keys are in s_defaultBinds: ZR fire, ZL alt fire, B jump,
+Y reload, X next weapon, A spirit walk, R grenade, L lighter, L3 sprint, R3 crouch
+(both toggles), D-pad up zoom, down center view, right/left next/previous weapon.
 
 	left stick  -> AXIS_YAW / AXIS_PITCH (move), right stick -> AXIS_SIDE /
 	AXIS_FORWARD (look), AXIS_ROLL = 127 marks the dedicated look stick.
@@ -121,30 +123,47 @@ static const switchButtonMap_t s_buttonMap[] = {
 };
 
 /*
-Default binds, applied only to keys the player has not bound (Switch_ApplyDefaultBinds),
+Default controller scheme, modeled on current console shooters (fire on the
+right trigger, jump on the bottom face button, click the sticks to sprint and
+crouch). Switch_ApplyDefaultBinds applies it to keys the player has not bound,
 so anything rebound from the menu or console is kept.
+
+Schemes are versioned: when in_switchControlScheme is older than the current
+one, keys still holding the previous scheme's default move to the new one.
 */
 typedef struct {
 	int				key;
-	const char *	command;
+	const char *	command;		// current scheme
+	const char *	previous;		// scheme 1 default for this key (NULL = none)
 } switchDefaultBind_t;
 
+static const int SWITCH_CONTROL_SCHEME = 2;
+
 static const switchDefaultBind_t s_defaultBinds[] = {
-	{ K_JOY15,	"_attack" },		// ZR: fire
-	{ K_JOY16,	"_attackalt" },		// ZL: alternate fire
-	{ K_JOY3,	"_moveUp" },		// B: jump
-	{ K_JOY4,	"_impulse13" },		// A: reload
-	{ K_JOY6,	"_impulse54" },		// Y: spirit walk
-	{ K_JOY5,	"_impulse16" },		// X: lighter
-	{ K_JOY2,	"_impulse14" },		// R: next weapon
-	{ K_JOY1,	"_impulse15" },		// L: previous weapon
-	{ K_JOY13,	"_speed" },			// L3: run
-	{ K_JOY14,	"_zoom" },			// R3: zoom
-	{ K_JOY9,	"_impulse25" },		// D-pad up: throw grenade
-	{ K_JOY10,	"_moveDown" },		// D-pad down: crouch
-	{ K_JOY11,	"_impulse14" },		// D-pad right: next weapon
-	{ K_JOY12,	"_impulse15" },		// D-pad left: previous weapon
+	{ K_JOY15,	"_attack",		"_attack" },		// ZR: fire
+	{ K_JOY16,	"_attackalt",	"_attackalt" },		// ZL: alternate fire
+	{ K_JOY3,	"_moveUp",		"_moveUp" },		// B: jump
+	{ K_JOY6,	"_impulse13",	"_impulse54" },		// Y: reload
+	{ K_JOY5,	"_impulse14",	"_impulse16" },		// X: next weapon
+	{ K_JOY4,	"_impulse54",	"_impulse13" },		// A: spirit walk
+	{ K_JOY2,	"_impulse25",	"_impulse14" },		// R: throw grenade
+	{ K_JOY1,	"_impulse16",	"_impulse15" },		// L: lighter
+	{ K_JOY13,	"_speed",		"_speed" },			// L3: sprint (toggle, in_toggleRun)
+	{ K_JOY14,	"_moveDown",	"_zoom" },			// R3: crouch (toggle, in_toggleCrouch)
+	{ K_JOY9,	"_zoom",		"_impulse25" },		// D-pad up: zoom (toggle, in_toggleZoom)
+	{ K_JOY10,	"_impulse18",	"_moveDown" },		// D-pad down: center view
+	{ K_JOY11,	"_impulse14",	"_impulse14" },		// D-pad right: next weapon
+	{ K_JOY12,	"_impulse15",	"_impulse15" },		// D-pad left: previous weapon
 };
+
+// Clicking a stick is awkward to hold, so sprint, crouch and zoom toggle.
+static const char *s_schemeCvars[][2] = {
+	{ "in_toggleRun",		"1" },
+	{ "in_toggleCrouch",	"1" },
+	{ "in_toggleZoom",		"1" },
+};
+
+static idCVar in_switchControlScheme( "in_switchControlScheme", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER | CVAR_NOCHEAT, "controller scheme version the binds were last set up for (internal)" );
 static const int NUM_BUTTON_MAPS = sizeof( s_buttonMap ) / sizeof( s_buttonMap[0] );
 
 // key each button was pressed as, so the release matches even if the mode changed
@@ -299,11 +318,24 @@ Called once after common->Init, when the saved config has been executed.
 ================
 */
 void Switch_ApplyDefaultBinds( void ) {
+	const bool upgrading = in_switchControlScheme.GetInteger() < SWITCH_CONTROL_SCHEME;
+
 	for ( size_t i = 0; i < sizeof( s_defaultBinds ) / sizeof( s_defaultBinds[0] ); i++ ) {
-		const char *current = idKeyInput::GetBinding( s_defaultBinds[i].key );
-		if ( !current || !current[0] ) {
-			idKeyInput::SetBinding( s_defaultBinds[i].key, s_defaultBinds[i].command );
+		const switchDefaultBind_t &bind = s_defaultBinds[i];
+		const char *current = idKeyInput::GetBinding( bind.key );
+		const bool unbound = !current || !current[0];
+		// on a scheme upgrade, also replace binds the player never changed
+		const bool stillPreviousDefault = upgrading && !unbound && bind.previous && idStr::Icmp( current, bind.previous ) == 0;
+		if ( unbound || stillPreviousDefault ) {
+			idKeyInput::SetBinding( bind.key, bind.command );
 		}
+	}
+
+	if ( upgrading ) {
+		for ( size_t i = 0; i < sizeof( s_schemeCvars ) / sizeof( s_schemeCvars[0] ); i++ ) {
+			cvarSystem->SetCVarString( s_schemeCvars[i][0], s_schemeCvars[i][1] );
+		}
+		in_switchControlScheme.SetInteger( SWITCH_CONTROL_SCHEME );
 	}
 }
 
