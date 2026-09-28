@@ -38,7 +38,7 @@ This guide covers OpenPrey display/window settings for end users, including mult
 `r_multiSamples` value guide:
 - `0`: disabled (fastest, most aliasing).
 - `2`: low-cost MSAA uplift for modest GPUs.
-- `4`: recommended default quality/performance balance.
+- `4`: recommended quality/performance balance (the shipped default is `0`).
 - `8`: high quality, noticeably higher GPU cost.
 - `16`: enthusiast/high-end setting where supported.
 - `1` usually provides no meaningful benefit and is not recommended.
@@ -86,7 +86,7 @@ These settings control first-person viewmodel rendering (the weapon on screen). 
 
 Notes:
 - `cl_gunfov` values above `0` are clamped to a safe range internally for weapon projection.
-- Weapon projection is handled in renderer weapon-depth path, so narrow/wide aspect changes are handled consistently.
+- Weapon projection is handled in the renderer's weapon-depth path, so narrow/wide aspect changes are handled consistently.
 - `cl_gun_x/y/z` are additive with legacy `g_gunX/Y/Z` offsets. Prefer `cl_gun_*` for user config.
 
 ## UI Aspect Correction (New)
