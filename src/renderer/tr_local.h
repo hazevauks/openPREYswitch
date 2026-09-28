@@ -634,7 +634,10 @@ typedef struct {
 	textureType_t	textureType;
 } tmu_t;
 
-const int MAX_MULTITEXTURE_UNITS =	8;
+// Must cover every unit GL_SelectTexture accepts (maxTextureImageUnits, 32 on
+// current drivers) and the hardcoded glConfig.maxTextureUnits of 16. With 8,
+// RB_SetDefaultGLState wrote GL_MODULATE past tmu[] into neighboring globals.
+const int MAX_MULTITEXTURE_UNITS =	32;
 typedef struct {
 	tmu_t		tmu[MAX_MULTITEXTURE_UNITS];
 	int			currenttmu;

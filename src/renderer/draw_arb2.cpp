@@ -191,6 +191,10 @@ GL_SelectTextureNoClient
 ====================
 */
 void GL_SelectTextureNoClient( int unit ) {
+	if ( unit < 0 || unit >= MAX_MULTITEXTURE_UNITS ) {
+		common->Warning( "GL_SelectTextureNoClient: unit = %i", unit );
+		return;
+	}
 	backEnd.glState.currenttmu = unit;
 	glActiveTextureARB( GL_TEXTURE0_ARB + unit );
 	RB_LogComment( "glActiveTextureARB( %i )\n", unit );

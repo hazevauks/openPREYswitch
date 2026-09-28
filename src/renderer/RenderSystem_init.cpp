@@ -317,6 +317,9 @@ static void R_CheckPortableExtensions( void ) {
 		//	glConfig.maxTextureUnits = MAX_MULTITEXTURE_UNITS;
 		//}
 		glConfig.maxTextureUnits = 16; // jmarshall: OpenGL LIES
+		if ( glConfig.maxTextureUnits > MAX_MULTITEXTURE_UNITS ) {
+			glConfig.maxTextureUnits = MAX_MULTITEXTURE_UNITS;	// backEnd.glState.tmu[] size
+		}
 		if ( glConfig.maxTextureUnits < 2 ) {
 			glConfig.multitextureAvailable = false;	// shouldn't ever happen
 		}
