@@ -1119,6 +1119,12 @@ void	GL_CheckErrors( void );
 double	R_PerfTime( void );
 void	R_AddPerfTime( bool backEnd, double seconds );
 void	R_TakePerfTimes( double &frontEndSec, double &backEndSec );
+void	R_TakePerfCounters( int &draws, int &parmsSkipped );
+void	RB_CountPerfDraw( void );
+
+// cached glProgramEnvParameter4fvARB (tr_backend.cpp, r_cacheProgramParms)
+void	RB_ProgramEnvParameter4fv( GLenum target, GLuint index, const GLfloat *params );
+void	RB_InvalidateProgramEnvCache( void );
 void	GL_ClearStateDelta( void );
 void	GL_State( int stateVector );
 void	GL_TexEnv( int env );

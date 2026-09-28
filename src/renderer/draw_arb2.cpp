@@ -207,23 +207,23 @@ RB_ARB2_DrawInteraction
 */
 void	RB_ARB2_DrawInteraction( const drawInteraction_t *din ) {
 	// load all the vertex program parameters
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_ORIGIN, din->localLightOrigin.ToFloatPtr() );
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_VIEW_ORIGIN, din->localViewOrigin.ToFloatPtr() );
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_PROJECT_S, din->lightProjection[0].ToFloatPtr() );
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_PROJECT_T, din->lightProjection[1].ToFloatPtr() );
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_PROJECT_Q, din->lightProjection[2].ToFloatPtr() );
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_FALLOFF_S, din->lightProjection[3].ToFloatPtr() );
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_BUMP_MATRIX_S, din->bumpMatrix[0].ToFloatPtr() );
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_BUMP_MATRIX_T, din->bumpMatrix[1].ToFloatPtr() );
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_DIFFUSE_MATRIX_S, din->diffuseMatrix[0].ToFloatPtr() );
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_DIFFUSE_MATRIX_T, din->diffuseMatrix[1].ToFloatPtr() );
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_SPECULAR_MATRIX_S, din->specularMatrix[0].ToFloatPtr() );
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_SPECULAR_MATRIX_T, din->specularMatrix[1].ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_ORIGIN, din->localLightOrigin.ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_VIEW_ORIGIN, din->localViewOrigin.ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_PROJECT_S, din->lightProjection[0].ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_PROJECT_T, din->lightProjection[1].ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_PROJECT_Q, din->lightProjection[2].ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_FALLOFF_S, din->lightProjection[3].ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_BUMP_MATRIX_S, din->bumpMatrix[0].ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_BUMP_MATRIX_T, din->bumpMatrix[1].ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_DIFFUSE_MATRIX_S, din->diffuseMatrix[0].ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_DIFFUSE_MATRIX_T, din->diffuseMatrix[1].ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_SPECULAR_MATRIX_S, din->specularMatrix[0].ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_SPECULAR_MATRIX_T, din->specularMatrix[1].ToFloatPtr() );
 
 	// testing fragment based normal mapping
 	if ( r_testARBProgram.GetBool() ) {
-		glProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 2, din->localLightOrigin.ToFloatPtr() );
-		glProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 3, din->localViewOrigin.ToFloatPtr() );
+		RB_ProgramEnvParameter4fv( GL_FRAGMENT_PROGRAM_ARB, 2, din->localLightOrigin.ToFloatPtr() );
+		RB_ProgramEnvParameter4fv( GL_FRAGMENT_PROGRAM_ARB, 3, din->localViewOrigin.ToFloatPtr() );
 	}
 
 	static const float zero[4] = { 0, 0, 0, 0 };
@@ -248,25 +248,25 @@ void	RB_ARB2_DrawInteraction( const drawInteraction_t *din ) {
 	if ( g_interactionVertexProgramColorMode == ICM_PACKED ) {
 		// Stock Quake 4 interaction.vfp packs vertex-color mode as env[16].xy.
 		const float packed[4] = { modulate, add, 0.0f, 0.0f };
-		glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_COLOR_MODULATE, packed );
-		glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_COLOR_ADD, zero );
+		RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_COLOR_MODULATE, packed );
+		RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_COLOR_ADD, zero );
 	} else {
 		float modulateVec[4] = { modulate, modulate, modulate, modulate };
 		float addVec[4] = { add, add, add, add };
-		glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_COLOR_MODULATE, modulateVec );
-		glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_COLOR_ADD, addVec );
+		RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_COLOR_MODULATE, modulateVec );
+		RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_COLOR_ADD, addVec );
 	}
 
 	// set the constant colors
-	glProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, din->diffuseColor.ToFloatPtr() );
-	glProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 1, din->specularColor.ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_FRAGMENT_PROGRAM_ARB, 0, din->diffuseColor.ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_FRAGMENT_PROGRAM_ARB, 1, din->specularColor.ToFloatPtr() );
 	const float alphaThreshold[4] = {
 		din->alphaTestThreshold,
 		din->alphaTestThreshold,
 		din->alphaTestThreshold,
 		din->alphaTestThreshold
 	};
-	glProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, FP_INTERACTION_ALPHA_TEST, alphaThreshold );
+	RB_ProgramEnvParameter4fv( GL_FRAGMENT_PROGRAM_ARB, FP_INTERACTION_ALPHA_TEST, alphaThreshold );
 
 	// set the textures
 
@@ -733,29 +733,29 @@ static void RB_ARB2_SetInteractionVertexColorMode( stageVertexColor_t vertexColo
 
 	if ( g_interactionVertexProgramColorMode == ICM_PACKED ) {
 		const float packed[4] = { modulate, add, 0.0f, 0.0f };
-		glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_COLOR_MODULATE, packed );
-		glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_COLOR_ADD, zero );
+		RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_COLOR_MODULATE, packed );
+		RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_COLOR_ADD, zero );
 	} else {
 		float modulateVec[4] = { modulate, modulate, modulate, modulate };
 		float addVec[4] = { add, add, add, add };
-		glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_COLOR_MODULATE, modulateVec );
-		glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_COLOR_ADD, addVec );
+		RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_COLOR_MODULATE, modulateVec );
+		RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_COLOR_ADD, addVec );
 	}
 }
 
 static void RB_ARB2_SetInteractionProgramEnv( const drawInteraction_t *din, stageVertexColor_t vertexColor ) {
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_ORIGIN, din->localLightOrigin.ToFloatPtr() );
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_VIEW_ORIGIN, din->localViewOrigin.ToFloatPtr() );
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_PROJECT_S, din->lightProjection[0].ToFloatPtr() );
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_PROJECT_T, din->lightProjection[1].ToFloatPtr() );
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_PROJECT_Q, din->lightProjection[2].ToFloatPtr() );
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_FALLOFF_S, din->lightProjection[3].ToFloatPtr() );
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_BUMP_MATRIX_S, din->bumpMatrix[0].ToFloatPtr() );
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_BUMP_MATRIX_T, din->bumpMatrix[1].ToFloatPtr() );
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_DIFFUSE_MATRIX_S, din->diffuseMatrix[0].ToFloatPtr() );
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_DIFFUSE_MATRIX_T, din->diffuseMatrix[1].ToFloatPtr() );
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_SPECULAR_MATRIX_S, din->specularMatrix[0].ToFloatPtr() );
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_SPECULAR_MATRIX_T, din->specularMatrix[1].ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_ORIGIN, din->localLightOrigin.ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_VIEW_ORIGIN, din->localViewOrigin.ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_PROJECT_S, din->lightProjection[0].ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_PROJECT_T, din->lightProjection[1].ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_PROJECT_Q, din->lightProjection[2].ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_FALLOFF_S, din->lightProjection[3].ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_BUMP_MATRIX_S, din->bumpMatrix[0].ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_BUMP_MATRIX_T, din->bumpMatrix[1].ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_DIFFUSE_MATRIX_S, din->diffuseMatrix[0].ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_DIFFUSE_MATRIX_T, din->diffuseMatrix[1].ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_SPECULAR_MATRIX_S, din->specularMatrix[0].ToFloatPtr() );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_SPECULAR_MATRIX_T, din->specularMatrix[1].ToFloatPtr() );
 	RB_ARB2_SetInteractionVertexColorMode( vertexColor );
 }
 
@@ -799,8 +799,8 @@ void RB_ARB2_DrawShaderInteraction( const drawInteraction_t *din, const shaderSt
 	glBindProgramARB( GL_FRAGMENT_PROGRAM_ARB, newStage->fragmentProgram );
 
 	RB_ARB2_SetInteractionProgramEnv( din, surfaceStage->vertexColor );
-	glProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, interactionColor );
-	glProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 1, interactionColor );
+	RB_ProgramEnvParameter4fv( GL_FRAGMENT_PROGRAM_ARB, 0, interactionColor );
+	RB_ProgramEnvParameter4fv( GL_FRAGMENT_PROGRAM_ARB, 1, interactionColor );
 
 	for ( int i = 0; i < newStage->numVertexParms; i++ ) {
 		float parm[4];

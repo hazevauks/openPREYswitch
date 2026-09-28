@@ -2272,6 +2272,12 @@ R_GlobalShaderOverride
 */
 bool R_GlobalShaderOverride( const idMaterial **shader ) {
 
+	// R_RemapShaderBySkin returns NULL for surfaces a skin removes; callers skip
+	// those right after this call (crashed here when loading a savegame)
+	if ( *shader == NULL ) {
+		return false;
+	}
+
 	if ( !(*shader)->IsDrawn() ) {
 		return false;
 	}

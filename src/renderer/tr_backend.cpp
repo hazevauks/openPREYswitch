@@ -131,7 +131,64 @@ void RB_LogComment( const char *comment, ... ) {
 
 //=============================================================================
 
+/*
+====================
+RB_ProgramEnvParameter4fv
 
+Every glProgramEnvParameter4fvARB marks the program constants dirty, so the
+driver re-uploads the constant buffer on the next draw even when the value did
+not change. Interactions set ~19 env parameters per draw, and consecutive
+interactions of the same light on world surfaces repeat most of them. On
+Mesa/nouveau (Switch) the render back end was 75-85% of the frame. This
+filters calls that would not change the value.
+
+Env parameters are per GL context and survive program binds and reloads; the
+cache is invalidated when the context is (re)created (R_InitOpenGL).
+====================
+*/
+idCVar r_cacheProgramParms( "r_cacheProgramParms", "1", CVAR_RENDERER | CVAR_BOOL, "skip ARB program env parameter updates that do not change the value" );
+
+static const int	ENV_PARM_CACHE_SIZE = 128;
+static float		envParmCache[2][ENV_PARM_CACHE_SIZE][4];
+static bool			envParmValid[2][ENV_PARM_CACHE_SIZE];
+static int			perfDraws = 0;
+static int			perfParmsSkipped = 0;
+
+void RB_InvalidateProgramEnvCache( void ) {
+	memset( envParmValid, 0, sizeof( envParmValid ) );
+}
+
+void RB_ProgramEnvParameter4fv( GLenum target, GLuint index, const GLfloat *params ) {
+	const int t = ( target == GL_FRAGMENT_PROGRAM_ARB ) ? 1 : 0;
+	if ( index < (GLuint)ENV_PARM_CACHE_SIZE ) {
+		if ( r_cacheProgramParms.GetBool() ) {
+			float *cached = envParmCache[t][index];
+			if ( envParmValid[t][index] && cached[0] == params[0] && cached[1] == params[1] && cached[2] == params[2] && cached[3] == params[3] ) {
+				perfParmsSkipped++;
+				return;
+			}
+			cached[0] = params[0];
+			cached[1] = params[1];
+			cached[2] = params[2];
+			cached[3] = params[3];
+			envParmValid[t][index] = true;
+		} else {
+			envParmValid[t][index] = false;
+		}
+	}
+	glProgramEnvParameter4fvARB( target, index, params );
+}
+
+// draws issued and env parameter updates skipped since the last call (com_logPerf)
+void R_TakePerfCounters( int &draws, int &parmsSkipped ) {
+	draws = perfDraws;
+	parmsSkipped = perfParmsSkipped;
+	perfDraws = perfParmsSkipped = 0;
+}
+
+void RB_CountPerfDraw( void ) {
+	perfDraws++;
+}
 
 /*
 ====================

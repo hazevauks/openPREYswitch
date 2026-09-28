@@ -197,6 +197,13 @@ x-right axis. `in_gyroDebug 1` prints raw values if a controller disagrees.
    clock-tick timers (`R_PerfTime`). Profile changes apply in game: the check
    compares values and cycles the CPU boost mode so the system re-applies the
    configuration.
+   With threads placed, `com_logPerf` showed the render back end at 75-85% of the
+   frame (23-38 ms standing, 80-95 ms while turning), with game logic ~3 ms and
+   front end ~2-5 ms: Mesa validates state and re-uploads program constants on
+   every draw. `r_cacheProgramParms` (default 1) skips ARB env parameter updates
+   that do not change the value; `com_logPerf` also reports draws and skipped
+   updates per frame. The structural next step is running the back end on its
+   own core (the vertex cache already has a CPU-memory mode for that).
 1. Performance on the Tegra X1. Hardware test at stock clocks: 22 fps at full
    resolution, 43 fps at half (fill-rate bound; shadows cost ~10%). Dynamic
    resolution is on by default on Switch: `r_dynamicResolution`,

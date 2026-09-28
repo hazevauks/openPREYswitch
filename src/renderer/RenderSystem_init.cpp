@@ -766,7 +766,8 @@ void R_InitOpenGL( void ) {
 		parms.stereo = false;
 
 		if ( GLimp_Init( parms ) ) {
-			// it worked
+			// it worked; a new context starts with default program env parameters
+			RB_InvalidateProgramEnvCache();
 			break;
 		}
 

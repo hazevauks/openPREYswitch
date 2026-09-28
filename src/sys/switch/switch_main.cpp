@@ -739,6 +739,12 @@ static void Switch_ReportHitch( int frameMsec, int opens0, double openSec0, long
 	double openSec1, readSec1;
 	long long bytes1;
 	FS_GetProfileTotals( opens1, openSec1, bytes1, readSec1 );
+	if ( opens1 < opens0 || bytes1 < bytes0 ) {
+		// a map load reset the counters during this frame (fsLoadStats reset)
+		common->Printf( "hitch: %d ms frame | files: (counters reset by a map load) | 3D scale %d%%\n",
+			frameMsec, cvarSystem->GetCVarInteger( "r_renderScaleCurrent" ) );
+		return;
+	}
 	common->Printf( "hitch: %d ms frame | files: %d opens (%.0f ms), %.2f MB read (%.0f ms) | 3D scale %d%%\n",
 		frameMsec,
 		opens1 - opens0, ( openSec1 - openSec0 ) * 1000.0,
@@ -761,6 +767,7 @@ static idCVar com_logPerf( "com_logPerf", "0", CVAR_SYSTEM | CVAR_BOOL, "log a p
 
 extern int time_gameFrame;
 void R_TakePerfTimes( double &frontEndSec, double &backEndSec );
+void R_TakePerfCounters( int &draws, int &parmsSkipped );
 
 static void Switch_UpdatePerfLog( int frameMsec, int gameMsec ) {
 	static int		windowStart = 0;
@@ -771,10 +778,14 @@ static void Switch_UpdatePerfLog( int frameMsec, int gameMsec ) {
 	static double	frontTotal = 0.0;
 	static double	backTotal = 0.0;
 	static float	swapTotal = 0.0f;
+	static int		drawTotal = 0;
+	static int		skippedTotal = 0;
 
 	const float swapMsec = Switch_TakeSwapMsec();
 	double frontSec, backSec;
 	R_TakePerfTimes( frontSec, backSec );	// always drain, so the first logged window is not inflated
+	int draws, skipped;
+	R_TakePerfCounters( draws, skipped );
 	if ( !com_logPerf.GetBool() || frameMsec > 5000 ) {
 		windowStart = 0;
 		return;
@@ -786,8 +797,11 @@ static void Switch_UpdatePerfLog( int frameMsec, int gameMsec ) {
 		frames = totalMsec = worstMsec = gameTotal = 0;
 		frontTotal = backTotal = 0.0;
 		swapTotal = 0.0f;
+		drawTotal = skippedTotal = 0;
 	}
 	frames++;
+	drawTotal += draws;
+	skippedTotal += skipped;
 	totalMsec += frameMsec;
 	worstMsec = Max( worstMsec, frameMsec );
 	gameTotal += gameMsec;
@@ -797,14 +811,16 @@ static void Switch_UpdatePerfLog( int frameMsec, int gameMsec ) {
 
 	if ( now - windowStart >= 1000 && frames > 0 ) {
 		const float n = (float)frames;
-		common->Printf( "perf: %.1f fps | frame %.1f ms (worst %d) | game %.1f | render front %.1f back %.1f | swap wait %.1f | 3D %d%%\n",
+		common->Printf( "perf: %.1f fps | frame %.1f ms (worst %d) | game %.1f | render front %.1f back %.1f | swap wait %.1f | draws %d, parms skipped %d | 3D %d%%\n",
 			n * 1000.0f / ( now - windowStart ), totalMsec / n, worstMsec,
 			gameTotal / n, frontTotal / n, backTotal / n, swapTotal / n,
+			(int)( drawTotal / n ), (int)( skippedTotal / n ),
 			cvarSystem->GetCVarInteger( "r_renderScaleCurrent" ) );
 		windowStart = now;
 		frames = totalMsec = worstMsec = gameTotal = 0;
 		frontTotal = backTotal = 0.0;
 		swapTotal = 0.0f;
+		drawTotal = skippedTotal = 0;
 	}
 }
 

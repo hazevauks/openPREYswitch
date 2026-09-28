@@ -54,6 +54,7 @@ This should never happen if the vertex cache is operating properly.
 void RB_DrawElementsImmediate( const srfTriangles_t *tri ) {
 
 	backEnd.pc.c_drawElements++;
+	RB_CountPerfDraw();
 	backEnd.pc.c_drawIndexes += tri->numIndexes;
 	backEnd.pc.c_drawVertexes += tri->numVerts;
 
@@ -83,6 +84,7 @@ RB_DrawElementsWithCounters
 void RB_DrawElementsWithCounters( const srfTriangles_t *tri ) {
 
 	backEnd.pc.c_drawElements++;
+	RB_CountPerfDraw();
 	backEnd.pc.c_drawIndexes += tri->numIndexes;
 	backEnd.pc.c_drawVertexes += tri->numVerts;
 
@@ -121,6 +123,7 @@ May not use all the indexes in the surface if caps are skipped
 */
 void RB_DrawShadowElementsWithCounters( const srfTriangles_t *tri, int numIndexes ) {
 	backEnd.pc.c_shadowElements++;
+	RB_CountPerfDraw();
 	backEnd.pc.c_shadowIndexes += numIndexes;
 	backEnd.pc.c_shadowVertexes += tri->numVerts;
 
