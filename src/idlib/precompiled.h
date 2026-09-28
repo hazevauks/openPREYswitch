@@ -129,7 +129,7 @@ public:
 
 #endif // _WINDOWS
 
-#ifdef __linux__
+#if defined( __linux__ ) || defined( __SWITCH__ )
 
 // for offsetof
 #include <stddef.h>

@@ -65,3 +65,6 @@ $tmp/
 /stdout*.txt
 /stderr*.txt
 /references/PREY.exe_disassembly.txt
+
+# Nintendo Switch cross build
+builddir-switch/

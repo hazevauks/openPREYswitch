@@ -158,6 +158,35 @@ If you have questions concerning this license or the applicable additional terms
 
 #endif
 
+// Nintendo Switch (devkitPro libnx, newlib)
+#ifdef __SWITCH__
+
+#define	BUILD_STRING					"switch-arm64"
+#define BUILD_OS_ID						3
+#define CPUSTRING						"arm64"
+#define CPU_EASYARGS					0
+
+#include <alloca.h>
+#define _alloca							alloca
+#define _alloca16( x )					((void *)((((intptr_t)alloca( (x)+15 )) + 15) & ~15))
+
+#define ALIGN16( x )					x __attribute__ ((aligned (16)))
+#define PACKED							__attribute__((packed))
+
+#define PATHSEPERATOR_STR				"/"
+#define PATHSEPERATOR_CHAR				'/'
+
+#define __cdecl
+#define ASSERT							assert
+
+#define ID_INLINE						inline
+#define ID_INLINE_EXTERN				inline
+#define ID_STATIC_TEMPLATE
+
+#define assertmem( x, y )
+
+#endif
+
 #ifdef __GNUC__
 #define id_attribute(x) __attribute__(x)
 #else

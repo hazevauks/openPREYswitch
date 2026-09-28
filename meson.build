@@ -8,9 +8,14 @@ project(
 
 host_system = host_machine.system()
 host_cpu_family = host_machine.cpu_family()
-if not ['windows', 'linux', 'darwin'].contains(host_system)
+if not ['windows', 'linux', 'darwin', 'horizon'].contains(host_system)
   error('Unsupported host system for OpenPrey Meson build: ' + host_system)
 endif
+
+# Nintendo Switch (devkitPro libnx). Cross-compile only; see tools/switch/meson/switch-cross.ini.
+# The platform bring-up is in progress: the game code is linked statically into the
+# engine because Switch homebrew cannot load a separate game module at runtime.
+is_switch = host_system == 'horizon'
 
 binary_arch = host_cpu_family
 if host_cpu_family == 'x86_64'
@@ -197,6 +202,9 @@ if build_engine
       fallback: ['glew', 'glew_dep'],
       default_options: fallback_opt,
     )
+  elif is_switch
+    # No GLEW on Switch: GL entry points are resolved through eglGetProcAddress.
+    glew_dep = dependency('', required: false)
   else
     glew_dep = dependency('glew', required: true)
   endif
@@ -210,6 +218,9 @@ if build_engine
 
   if host_system == 'darwin'
     openal_dep = dependency('appleframeworks', modules: ['OpenAL'], required: true)
+  elif is_switch
+    # devkitPro switch-openal-soft package (static libopenal.a).
+    openal_dep = cc.find_library('openal', required: true)
   else
     openal_dep = dependency(
       'openal',
@@ -266,6 +277,19 @@ if build_engine
         required: true,
       ),
     ]
+  elif is_switch
+    # devkitPro portlibs: SDL2 for window/input, Mesa (EGL + glapi + nouveau) for OpenGL.
+    # Mesa is C++ and needs libstdc++/libm even when linked from C.
+    deps += [
+      dependency('threads', required: true),
+      cc.find_library('SDL2', required: true),
+      cc.find_library('EGL', required: true),
+      cc.find_library('glapi', required: true),
+      cc.find_library('drm_nouveau', required: true),
+      cc.find_library('stdc++', required: true),
+      cc.find_library('m', required: true),
+      cc.find_library('nx', required: true),
+    ]
   endif
 endif
 
@@ -277,6 +301,10 @@ if host_system == 'windows'
   shared_cpp_args += ['-D_WINDOWS', '-DWIN32']
   shared_c_args += ['-D_WINDOWS', '-DWIN32']
   engine_link_args += ['/STACK:16777216,16777216']
+elif is_switch
+  # No libGL to hard-link against: qgl* pointers are loaded at runtime through EGL.
+  shared_cpp_args += ['-DOPENPREY_SWITCH=1']
+  shared_c_args += ['-DOPENPREY_SWITCH=1']
 else
   shared_cpp_args += ['-DID_GL_HARDLINK']
   shared_c_args += ['-DID_GL_HARDLINK']
@@ -390,6 +418,8 @@ if build_engine
       install: true,
       install_dir: install_root_dir,
     )
+  elif is_switch
+    # No dedicated server on Switch.
   else
     executable(
       engine_ded_binary_name,

@@ -126,6 +126,10 @@ DARWIN_PLATFORM_SOURCES = (
     "sys/osx/macosx_sys.mm",
 )
 
+# Nintendo Switch (libnx). The src/sys/switch backend is still being brought up;
+# until it exists the engine target is not expected to link on this host.
+HORIZON_PLATFORM_SOURCES: tuple[str, ...] = ()
+
 
 def add_source(
     source_set: set[str], ordered_sources: list[str], rel_path: pathlib.Path
@@ -162,7 +166,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--host-system",
-        choices=("windows", "linux", "darwin"),
+        choices=("windows", "linux", "darwin", "horizon"),
         default="windows",
         help="Meson host system for source selection.",
     )
@@ -253,6 +257,9 @@ def main(argv: list[str]) -> int:
                 add_required_source(source_set, ordered_sources, source_root, rel_path)
         elif args.host_system == "darwin":
             for rel_path in DARWIN_PLATFORM_SOURCES:
+                add_required_source(source_set, ordered_sources, source_root, rel_path)
+        elif args.host_system == "horizon":
+            for rel_path in HORIZON_PLATFORM_SOURCES:
                 add_required_source(source_set, ordered_sources, source_root, rel_path)
         else:
             print(f"Unsupported host system: {args.host_system}", file=sys.stderr)
