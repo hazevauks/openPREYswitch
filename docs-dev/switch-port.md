@@ -182,6 +182,12 @@ x-right axis. `in_gyroDebug 1` prints raw values if a controller disagrees.
    GPU memory bandwidth. The cache regenerates once, because it is keyed on the
    format. `com_logHitches` (ms, default 100) logs slow frames with the file
    work done in them.
+0b. Clock profile: Status Monitor showed GPU 99% at 307.2 MHz (handheld default
+   PerformanceConfiguration 0x00020003) with game logic ~3 ms and swap wait
+   ~0.3 ms per 40-50 ms frame, so the game is GPU bound. `r_switchPerfProfile`
+   (default 3) selects an official handheld configuration: 1 = GPU 384 MHz,
+   2 = 460.8 MHz, 3 = 460.8 MHz + EMC 1600 MHz (0x92220007). The default
+   profile is restored on exit.
 1. Performance on the Tegra X1. Hardware test at stock clocks: 22 fps at full
    resolution, 43 fps at half (fill-rate bound; shadows cost ~10%). Dynamic
    resolution is on by default on Switch: `r_dynamicResolution`,

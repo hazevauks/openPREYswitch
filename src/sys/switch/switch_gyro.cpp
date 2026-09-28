@@ -61,8 +61,10 @@ typedef enum {
 } gyroSource_t;
 
 static HidSixAxisSensorHandle	s_handles[GYRO_NUM_SOURCES];
+static bool						s_haveHandle[GYRO_NUM_SOURCES];
 static bool						s_started[GYRO_NUM_SOURCES];
 static bool						s_initialized = false;
+static int						s_sensorsWanted = -1;		// last in_gyro on/off state applied (-1 = none)
 
 static int		s_activeSource = -1;
 static u64		s_lastSampling = 0;
@@ -88,13 +90,28 @@ void Switch_InitGyro( void ) {
 		s_handles[GYRO_JOYDUAL_RIGHT] = joyDual[1];
 	}
 
-	const bool have[GYRO_NUM_SOURCES] = { haveHandheld, haveFullKey, haveJoyDual };
-	for ( int i = 0; i < GYRO_NUM_SOURCES; i++ ) {
-		s_started[i] = have[i] && R_SUCCEEDED( hidStartSixAxisSensor( s_handles[i] ) );
-	}
+	s_haveHandle[GYRO_HANDHELD] = haveHandheld;
+	s_haveHandle[GYRO_FULLKEY] = haveFullKey;
+	s_haveHandle[GYRO_JOYDUAL_RIGHT] = haveJoyDual;
 
+	// the sensors start on demand (Switch_SetSensorsRunning), only while in_gyro is on
+	s_sensorsWanted = -1;
 	s_activeSource = -1;
 	s_initialized = true;
+}
+
+static void Switch_SetSensorsRunning( bool run ) {
+	for ( int i = 0; i < GYRO_NUM_SOURCES; i++ ) {
+		if ( run && !s_started[i] && s_haveHandle[i] ) {
+			s_started[i] = R_SUCCEEDED( hidStartSixAxisSensor( s_handles[i] ) );
+		} else if ( !run && s_started[i] ) {
+			hidStopSixAxisSensor( s_handles[i] );
+			s_started[i] = false;
+		}
+	}
+	if ( !run ) {
+		s_activeSource = -1;
+	}
 }
 
 static void Switch_ResetGyroTracking( int source ) {
@@ -111,6 +128,17 @@ Switch_UpdateGyro
 */
 void Switch_UpdateGyro( bool gameplay, bool aimHeld, bool handheld, unsigned int npadStyleSet ) {
 	if ( !s_initialized ) {
+		return;
+	}
+
+	// keep the sensors off entirely while gyro aiming is disabled (switch only on changes:
+	// each start/stop is a service call, and a missing controller would fail every frame)
+	const int wanted = ( in_gyro.GetInteger() != 0 ) ? 1 : 0;
+	if ( wanted != s_sensorsWanted ) {
+		s_sensorsWanted = wanted;
+		Switch_SetSensorsRunning( wanted != 0 );
+	}
+	if ( !wanted ) {
 		return;
 	}
 
@@ -243,6 +271,7 @@ void Switch_ShutdownGyro( void ) {
 			s_started[i] = false;
 		}
 	}
+	s_sensorsWanted = -1;
 	s_activeSource = -1;
 	s_initialized = false;
 }

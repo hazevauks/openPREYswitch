@@ -390,6 +390,51 @@ void Sys_SetLoadingBoost( bool enable ) {
 }
 
 /*
+================
+Performance profile
+
+Handheld mode runs applications on the default PerformanceConfiguration
+0x00020003 (CPU 1020 / GPU 307.2 / EMC 1331.2 MHz). Hardware test at that
+profile: GPU 99% busy at 20-25 fps. Retail games may pick stronger official
+handheld configurations, listed here (switchbrew PTM_services). Docked
+(PerformanceMode Boost) already defaults to GPU 768 MHz and is left alone.
+================
+*/
+static idCVar r_switchPerfProfile( "r_switchPerfProfile", "3", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
+	"handheld clock profile (official configurations): 0 = system default (GPU 307 MHz), 1 = GPU 384 MHz, 2 = GPU 460.8 MHz, 3 = GPU 460.8 MHz + memory 1600 MHz", 0, 3 );
+
+static const u32 SWITCH_HANDHELD_DEFAULT_CONFIG = 0x00020003;	// Cpu1020MhzGpu307MhzEmc1331Mhz
+static const u32 s_handheldConfigs[] = {
+	SWITCH_HANDHELD_DEFAULT_CONFIG,
+	0x00020004,		// Cpu1020MhzGpu384MhzEmc1331Mhz
+	0x92220008,		// Cpu1020MhzGpu460MhzEmc1331Mhz
+	0x92220007,		// Cpu1020MhzGpu460MhzEmc1600Mhz
+};
+static bool s_perfProfileChanged = false;
+
+void Switch_ApplyPerformanceProfile( void ) {
+	const int profile = idMath::ClampInt( 0, 3, r_switchPerfProfile.GetInteger() );
+	const Result rc = apmSetPerformanceConfiguration( ApmPerformanceMode_Normal, s_handheldConfigs[profile] );
+	s_perfProfileChanged = ( profile != 0 ) && R_SUCCEEDED( rc );
+	common->Printf( "Switch handheld clock profile %d (0x%08X): %s\n", profile, s_handheldConfigs[profile],
+		R_SUCCEEDED( rc ) ? "set" : va( "failed (0x%X)", rc ) );
+	r_switchPerfProfile.ClearModified();
+}
+
+void Switch_CheckPerformanceProfile( void ) {
+	if ( r_switchPerfProfile.IsModified() ) {
+		Switch_ApplyPerformanceProfile();
+	}
+}
+
+void Switch_RestorePerformanceProfile( void ) {
+	if ( s_perfProfileChanged ) {
+		apmSetPerformanceConfiguration( ApmPerformanceMode_Normal, SWITCH_HANDHELD_DEFAULT_CONFIG );
+		s_perfProfileChanged = false;
+	}
+}
+
+/*
 ============================================================================
 FILES AND PATHS
 ============================================================================
@@ -600,6 +645,7 @@ void Sys_GenerateEvents( void ) {
 		return;
 	}
 	Switch_PollInput();
+	Switch_CheckPerformanceProfile();
 }
 
 /*
@@ -758,6 +804,7 @@ static void *Switch_EngineThread( void * ) {
 	common->Init( args.Num(), args.Ptr(), NULL );
 	Sys_SetLoadingBoost( false );
 	Switch_ApplyDefaultBinds();
+	Switch_ApplyPerformanceProfile();
 
 	common->Printf( "%d MB System Memory\n", Sys_GetSystemRam() );
 	Switch_StartAsyncThread();
@@ -818,23 +865,8 @@ int main( int argc, char **argv ) {
 	// the engine thread is gone: release hardware it left running
 	Switch_ShutdownGyro();
 
-	// Safety net: returning to the homebrew loader keeps this process, so any
-	// thread still alive (e.g. one a library never joined) would run unloaded
-	// code and crash the system when the software is closed. If anything besides
-	// this thread remains, end the whole process instead (back to HOME).
-	u64 threadIds[16];
-	s32 threadCount = 0;
-	if ( R_SUCCEEDED( svcGetThreadList( &threadCount, threadIds, 16, INVALID_HANDLE ) ) && threadCount > 1 ) {
-		char note[128];
-		idStr::snPrintf( note, sizeof( note ), "exit: %d threads still alive; ended the process instead of returning to the loader", (int)threadCount );
-		FILE *f = fopen( SWITCH_BASE_PATH "/openprey_exit.txt", "wb" );
-		if ( f ) {
-			fputs( note, f );
-			fputc( '\n', f );
-			fclose( f );
-		}
-		svcExitProcess();
-	}
+	// hand the clocks back to the system default
+	Switch_RestorePerformanceProfile();
 
 	if ( s_nxlinkActive ) {
 		socketExit();

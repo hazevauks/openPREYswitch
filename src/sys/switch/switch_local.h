@@ -18,6 +18,10 @@ void		Switch_QueEvent( sysEventType_t type, int value, int value2, int ptrLength
 
 // CPU boost while loading (switch_main.cpp); calls nest.
 void		Sys_SetLoadingBoost( bool enable );
+// Handheld clock profile (r_switchPerfProfile, switch_main.cpp).
+void		Switch_ApplyPerformanceProfile( void );
+void		Switch_CheckPerformanceProfile( void );
+void		Switch_RestorePerformanceProfile( void );
 
 // Threads (switch_threads.cpp).
 void		Switch_InitThreads( void );
