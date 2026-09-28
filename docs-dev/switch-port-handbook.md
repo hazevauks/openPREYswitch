@@ -90,6 +90,9 @@ MSYSTEM=MSYS /c/Users/Usuario/Downloads/devkitPro/msys2/usr/bin/bash.exe -lc "cd
   - Saves e logs.
 - Ler um crash:
   `aarch64-none-elf-addr2line -f -C -e .tmp/elf-builds/OpenPrey-<commit>.elf <offsets>`
+- **Interagir** (falar com NPCs, apertar botões, usar telas) é o botão de ataque
+  (ZR), como no Prey original: chegue perto e mire no alvo. O zoom (D-pad para
+  cima) só funciona com uma arma que tem zoom.
 - **Console do jogo:** o botão **−** abre e fecha; **A** abre o teclado do sistema.
 
 ## 4. Mapa do código do Switch
@@ -183,7 +186,7 @@ Medido no console com GPU a 460,8 MHz e memória a 1600 MHz (perfil 3):
 | `com_logPerf 1` | 0 | Uma linha de desempenho por segundo no log |
 | `com_logHitches` | 100 | Registra quadros acima de N ms, com o detalhamento |
 | `r_perfGpuSync 1` | 0 | Diagnóstico: separa tempo de CPU e de GPU (baixa o fps) |
-| `r_fpsLock` | 30 | 30 = travado; 0 = destravado |
+| `r_fpsLock` | 30 | 30 = travado; 0 = destravado. Funciona dormindo antes da troca de quadro. **Não use swap interval 2: congelou a tela de carregamento no console.** |
 | `r_dynamicResolution` | 1 | Resolução dinâmica |
 | `r_dynamicResolutionMin` | 50 | Resolução mínima, em % |
 | `r_renderScale` | 100 | Resolução máxima, em % |

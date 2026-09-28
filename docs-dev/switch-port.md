@@ -217,10 +217,15 @@ x-right axis. `in_gyroDebug 1` prints raw values if a controller disagrees.
    frame into game/front/back/swap and buffers; `r_perfGpuSync 1` (diagnostic)
    waits for the GPU before each swap and reports that wait, splitting the back
    end into CPU and GPU time.
-   `r_fpsLock` (default 30) presents every second vblank (swap interval 2; if the
-   EGL driver caps the interval at 1 it waits out the 33.3 ms instead). Dynamic
-   resolution subtracts the swap wait, so it judges the time a frame worked, and
-   aims 10% under the frame budget. The structural next step is running the back
+   `r_fpsLock` (default 30) paces frames 33.3 ms apart by sleeping before the
+   swap. The swap interval stays at `r_swapInterval` (0): EGL reports a huge
+   maximum interval, but swap interval 2 froze the loading screen on hardware.
+   Dynamic resolution subtracts the swap wait (including that sleep), so it
+   judges the time a frame worked, and aims 10% under the frame budget.
+   Hardware log in the bar with ~2000 draws: the back end stayed at 75-90 ms
+   whether the 3D scale was 100% or 50%, so that scene is bound by per-draw
+   CPU/driver cost, not fill rate; vertex buffer re-creation was modest
+   (~15-20 buffers, ~200 KB per frame). The structural next step is running the back
    end on its own core (the vertex cache already has a CPU-memory mode for that).
 1. Performance on the Tegra X1. Hardware test at stock clocks: 22 fps at full
    resolution, 43 fps at half (fill-rate bound; shadows cost ~10%). Dynamic
