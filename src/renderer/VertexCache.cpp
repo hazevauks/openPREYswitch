@@ -472,6 +472,8 @@ void idVertexCache::EndFrame() {
 	}
 
 
+	R_AddVertexCachePerf( staticCountThisFrame, staticAllocThisFrame, dynamicAllocThisFrame, tempOverflow );
+
 	currentFrame = tr.frameCount;
 	listNum = currentFrame % NUM_VERTEX_FRAMES;
 	staticAllocThisFrame = 0;

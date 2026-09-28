@@ -1119,8 +1119,8 @@ void	GL_CheckErrors( void );
 double	R_PerfTime( void );
 void	R_AddPerfTime( bool backEnd, double seconds );
 void	R_TakePerfTimes( double &frontEndSec, double &backEndSec );
-void	R_TakePerfCounters( int &draws, int &parmsSkipped );
 void	RB_CountPerfDraw( void );
+void	R_AddVertexCachePerf( int bufferAllocs, int bufferAllocBytes, int tempBytes, bool tempOverflow );
 
 // cached glProgramEnvParameter4fvARB (tr_backend.cpp, r_cacheProgramParms)
 void	RB_ProgramEnvParameter4fv( GLenum target, GLuint index, const GLfloat *params );
@@ -1220,6 +1220,9 @@ void		GLimp_Shutdown( void );
 // and resets the gamma ramps.
 
 void		GLimp_SwapBuffers( void );
+#ifdef __SWITCH__
+float		GLimp_LastSwapWaitMsec( void );	// time the last swap waited for vblank / r_fpsLock
+#endif
 // Calls the system specific swapbuffers routine, and may also perform
 // other system specific cvar checks that happen every frame.
 // This will not be called if 'r_drawBuffer GL_FRONT'

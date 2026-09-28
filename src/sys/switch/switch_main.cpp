@@ -729,26 +729,29 @@ static idCVar com_logHitches( "com_logHitches", "100", CVAR_SYSTEM | CVAR_INTEGE
 
 void FS_GetProfileTotals( int &opens, double &openSec, long long &readBytes, double &readSec );
 
-static void Switch_ReportHitch( int frameMsec, int opens0, double openSec0, long long bytes0, double readSec0 ) {
+static void Switch_ReportHitch( int frameMsec, int gameMsec, float swapMsec, const rendererPerf_t &perf,
+		int opens0, double openSec0, long long bytes0, double readSec0 ) {
 	const int threshold = com_logHitches.GetInteger();
 	// map loads run inside one frame and report their own timings
 	if ( threshold <= 0 || frameMsec < threshold || frameMsec > 5000 ) {
 		return;
 	}
+	idStr files;
 	int opens1;
 	double openSec1, readSec1;
 	long long bytes1;
 	FS_GetProfileTotals( opens1, openSec1, bytes1, readSec1 );
 	if ( opens1 < opens0 || bytes1 < bytes0 ) {
 		// a map load reset the counters during this frame (fsLoadStats reset)
-		common->Printf( "hitch: %d ms frame | files: (counters reset by a map load) | 3D scale %d%%\n",
-			frameMsec, cvarSystem->GetCVarInteger( "r_renderScaleCurrent" ) );
-		return;
+		files = "(counters reset by a map load)";
+	} else {
+		files = va( "%d opens (%.0f ms), %.2f MB read (%.0f ms)",
+			opens1 - opens0, ( openSec1 - openSec0 ) * 1000.0,
+			( bytes1 - bytes0 ) / ( 1024.0 * 1024.0 ), ( readSec1 - readSec0 ) * 1000.0 );
 	}
-	common->Printf( "hitch: %d ms frame | files: %d opens (%.0f ms), %.2f MB read (%.0f ms) | 3D scale %d%%\n",
-		frameMsec,
-		opens1 - opens0, ( openSec1 - openSec0 ) * 1000.0,
-		( bytes1 - bytes0 ) / ( 1024.0 * 1024.0 ), ( readSec1 - readSec0 ) * 1000.0,
+	common->Printf( "hitch: %d ms frame | game %d front %.0f back %.0f swap %.0f | draws %d, buffers %d (%d KB) | files: %s | 3D scale %d%%\n",
+		frameMsec, gameMsec, perf.frontEndSec * 1000.0, perf.backEndSec * 1000.0, swapMsec,
+		perf.draws, perf.bufferAllocs, perf.bufferAllocBytes / 1024, files.c_str(),
 		cvarSystem->GetCVarInteger( "r_renderScaleCurrent" ) );
 }
 
@@ -758,34 +761,28 @@ Switch_UpdatePerfLog
 
 com_logPerf 1 logs a one-line summary per second: frame rate, average and worst
 frame, and where the time went. Game logic, render front end and back end come
-from the com_speeds counters; swap is time blocked in eglSwapBuffers (CPU
-waiting for the GPU). Comparing these with the Status Monitor CPU/GPU load shows
-whether a frame is CPU bound, GPU bound, or serialized.
+from the com_speeds counters; swap is time blocked in eglSwapBuffers (vblank,
+r_fpsLock, or the CPU waiting for the GPU). "buffers" counts vertex cache
+buffers created per frame (glBufferData on fresh storage, costly on nouveau),
+"temp" is the per-frame vertex data and "overflow" the frames whose temp data
+did not fit. With r_perfGpuSync 1 "gpu wait" is the GPU work left after the
+CPU finished the frame. Comparing these with the Status Monitor CPU/GPU load
+shows whether a frame is CPU bound, GPU bound, or serialized.
 ================
 */
-static idCVar com_logPerf( "com_logPerf", "0", CVAR_SYSTEM | CVAR_BOOL, "log a performance summary once per second (frame, game, render front/back end, swap wait)" );
+static idCVar com_logPerf( "com_logPerf", "0", CVAR_SYSTEM | CVAR_BOOL, "log a performance summary once per second (frame, game, render front/back end, swap wait, vertex buffers)" );
 
 extern int time_gameFrame;
-void R_TakePerfTimes( double &frontEndSec, double &backEndSec );
-void R_TakePerfCounters( int &draws, int &parmsSkipped );
 
-static void Switch_UpdatePerfLog( int frameMsec, int gameMsec ) {
-	static int		windowStart = 0;
-	static int		frames = 0;
-	static int		totalMsec = 0;
-	static int		worstMsec = 0;
-	static int		gameTotal = 0;
-	static double	frontTotal = 0.0;
-	static double	backTotal = 0.0;
-	static float	swapTotal = 0.0f;
-	static int		drawTotal = 0;
-	static int		skippedTotal = 0;
+static void Switch_UpdatePerfLog( int frameMsec, int gameMsec, float swapMsec, const rendererPerf_t &perf ) {
+	static int				windowStart = 0;
+	static int				frames = 0;
+	static int				totalMsec = 0;
+	static int				worstMsec = 0;
+	static int				gameTotal = 0;
+	static float			swapTotal = 0.0f;
+	static rendererPerf_t	sum;
 
-	const float swapMsec = Switch_TakeSwapMsec();
-	double frontSec, backSec;
-	R_TakePerfTimes( frontSec, backSec );	// always drain, so the first logged window is not inflated
-	int draws, skipped;
-	R_TakePerfCounters( draws, skipped );
 	if ( !com_logPerf.GetBool() || frameMsec > 5000 ) {
 		windowStart = 0;
 		return;
@@ -795,32 +792,40 @@ static void Switch_UpdatePerfLog( int frameMsec, int gameMsec ) {
 	if ( windowStart == 0 ) {
 		windowStart = now;
 		frames = totalMsec = worstMsec = gameTotal = 0;
-		frontTotal = backTotal = 0.0;
 		swapTotal = 0.0f;
-		drawTotal = skippedTotal = 0;
+		memset( &sum, 0, sizeof( sum ) );
 	}
 	frames++;
-	drawTotal += draws;
-	skippedTotal += skipped;
 	totalMsec += frameMsec;
 	worstMsec = Max( worstMsec, frameMsec );
 	gameTotal += gameMsec;
-	frontTotal += frontSec * 1000.0;
-	backTotal += backSec * 1000.0;
 	swapTotal += swapMsec;
+	sum.frontEndSec += perf.frontEndSec;
+	sum.backEndSec += perf.backEndSec;
+	sum.gpuTailSec += perf.gpuTailSec;
+	sum.draws += perf.draws;
+	sum.parmsSkipped += perf.parmsSkipped;
+	sum.bufferAllocs += perf.bufferAllocs;
+	sum.bufferAllocBytes += perf.bufferAllocBytes;
+	sum.tempBytes += perf.tempBytes;
+	sum.tempOverflows += perf.tempOverflows;
 
 	if ( now - windowStart >= 1000 && frames > 0 ) {
 		const float n = (float)frames;
-		common->Printf( "perf: %.1f fps | frame %.1f ms (worst %d) | game %.1f | render front %.1f back %.1f | swap wait %.1f | draws %d, parms skipped %d | 3D %d%%\n",
+		idStr gpu;
+		if ( sum.gpuTailSec > 0.0 ) {
+			gpu = va( " (gpu wait %.1f)", sum.gpuTailSec * 1000.0 / n );
+		}
+		common->Printf( "perf: %.1f fps | frame %.1f ms (worst %d) | game %.1f | render front %.1f back %.1f%s | swap wait %.1f | draws %d, parms skipped %d | buffers %d (%d KB), temp %d KB, overflow %d | 3D %d%%\n",
 			n * 1000.0f / ( now - windowStart ), totalMsec / n, worstMsec,
-			gameTotal / n, frontTotal / n, backTotal / n, swapTotal / n,
-			(int)( drawTotal / n ), (int)( skippedTotal / n ),
+			gameTotal / n, sum.frontEndSec * 1000.0 / n, sum.backEndSec * 1000.0 / n, gpu.c_str(), swapTotal / n,
+			(int)( sum.draws / n ), (int)( sum.parmsSkipped / n ),
+			(int)( sum.bufferAllocs / n ), (int)( sum.bufferAllocBytes / n / 1024.0f ), (int)( sum.tempBytes / n / 1024.0f ), sum.tempOverflows,
 			cvarSystem->GetCVarInteger( "r_renderScaleCurrent" ) );
 		windowStart = now;
 		frames = totalMsec = worstMsec = gameTotal = 0;
-		frontTotal = backTotal = 0.0;
 		swapTotal = 0.0f;
-		drawTotal = skippedTotal = 0;
+		memset( &sum, 0, sizeof( sum ) );
 	}
 }
 
@@ -853,10 +858,14 @@ static void *Switch_EngineThread( void * ) {
 		common->Frame();
 
 		const int frameMsec = Sys_Milliseconds() - frameStart;
-		Switch_ReportHitch( frameMsec, opens0, openSec0, bytes0, readSec0 );
 		// com_speeds resets time_gameFrame after printing; treat a drop as a reset
 		const int gameMsec = ( time_gameFrame >= gameMsec0 ) ? time_gameFrame - gameMsec0 : time_gameFrame;
-		Switch_UpdatePerfLog( frameMsec, gameMsec );
+		// always drain the counters, so a log window never starts inflated
+		const float swapMsec = Switch_TakeSwapMsec();
+		rendererPerf_t perf;
+		R_TakePerfCounters( perf );
+		Switch_ReportHitch( frameMsec, gameMsec, swapMsec, perf, opens0, openSec0, bytes0, readSec0 );
+		Switch_UpdatePerfLog( frameMsec, gameMsec, swapMsec, perf );
 	}
 	return NULL;
 }

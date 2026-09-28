@@ -151,8 +151,7 @@ idCVar r_cacheProgramParms( "r_cacheProgramParms", "1", CVAR_RENDERER | CVAR_BOO
 static const int	ENV_PARM_CACHE_SIZE = 128;
 static float		envParmCache[2][ENV_PARM_CACHE_SIZE][4];
 static bool			envParmValid[2][ENV_PARM_CACHE_SIZE];
-static int			perfDraws = 0;
-static int			perfParmsSkipped = 0;
+static rendererPerf_t	perfCounters;
 
 void RB_InvalidateProgramEnvCache( void ) {
 	memset( envParmValid, 0, sizeof( envParmValid ) );
@@ -164,7 +163,7 @@ void RB_ProgramEnvParameter4fv( GLenum target, GLuint index, const GLfloat *para
 		if ( r_cacheProgramParms.GetBool() ) {
 			float *cached = envParmCache[t][index];
 			if ( envParmValid[t][index] && cached[0] == params[0] && cached[1] == params[1] && cached[2] == params[2] && cached[3] == params[3] ) {
-				perfParmsSkipped++;
+				perfCounters.parmsSkipped++;
 				return;
 			}
 			cached[0] = params[0];
@@ -179,15 +178,38 @@ void RB_ProgramEnvParameter4fv( GLenum target, GLuint index, const GLfloat *para
 	glProgramEnvParameter4fvARB( target, index, params );
 }
 
-// draws issued and env parameter updates skipped since the last call (com_logPerf)
-void R_TakePerfCounters( int &draws, int &parmsSkipped ) {
-	draws = perfDraws;
-	parmsSkipped = perfParmsSkipped;
-	perfDraws = perfParmsSkipped = 0;
+/*
+====================
+R_TakePerfCounters
+
+Renderer counters since the last call, for the Switch performance logs.
+
+r_perfGpuSync makes the back end wait for the GPU (glFinish) before each swap and
+reports that wait. The GPU then starts every frame idle, so the rest of the back
+end time is CPU work (GL calls and driver validation) and the wait is GPU work
+the CPU did not cover: a long wait means the frame is GPU bound (fill rate,
+bandwidth), a short one means the driver CPU cost is the limit.
+====================
+*/
+idCVar r_perfGpuSync( "r_perfGpuSync", "0", CVAR_RENDERER | CVAR_BOOL, "diagnostic: glFinish before each swap and report the GPU wait in com_logPerf (serializes CPU and GPU, lowers the frame rate)" );
+
+void R_TakePerfCounters( rendererPerf_t &perf ) {
+	perf = perfCounters;
+	R_TakePerfTimes( perf.frontEndSec, perf.backEndSec );
+	memset( &perfCounters, 0, sizeof( perfCounters ) );
 }
 
 void RB_CountPerfDraw( void ) {
-	perfDraws++;
+	perfCounters.draws++;
+}
+
+// idVertexCache::EndFrame
+void R_AddVertexCachePerf( int bufferAllocs, int bufferAllocBytes, int tempBytes, bool tempOverflow ) {
+	perfCounters.bufferAllocs += bufferAllocs;
+	perfCounters.bufferAllocBytes += bufferAllocBytes;
+	perfCounters.tempBytes += tempBytes;
+	perfCounters.tempOverflows += tempOverflow ? 1 : 0;
+	perfCounters.frames++;
 }
 
 /*
@@ -582,6 +604,12 @@ const void	RB_SwapBuffers( const void *data ) {
 
 	if ( !r_frontBuffer.GetBool() ) {
 		RB_ApplyCRTToBackBuffer();
+	}
+
+	if ( r_perfGpuSync.GetBool() ) {
+		const double syncStart = R_PerfTime();
+		glFinish();
+		perfCounters.gpuTailSec += R_PerfTime() - syncStart;
 	}
 
 	// don't flip if drawing to front buffer

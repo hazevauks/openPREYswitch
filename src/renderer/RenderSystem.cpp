@@ -117,8 +117,15 @@ static float R_UpdateRenderScale( void ) {
 	const float maxScale = idMath::ClampFloat( 0.25f, 1.0f, r_renderScale.GetInteger() / 100.0f );
 
 	const int now = Sys_Milliseconds();
-	const int frameMsec = renderScaleLastFrameTime ? now - renderScaleLastFrameTime : 0;
+	int frameMsec = renderScaleLastFrameTime ? now - renderScaleLastFrameTime : 0;
 	renderScaleLastFrameTime = now;
+#ifdef __SWITCH__
+	// with r_fpsLock every frame lasts 33 ms however light it is; judge the
+	// resolution by the time the frame worked, not the time it waited to be shown
+	if ( frameMsec > 0 ) {
+		frameMsec = Max( 1, frameMsec - idMath::FtoiFast( GLimp_LastSwapWaitMsec() ) );
+	}
+#endif
 
 	if ( !r_dynamicResolution.GetBool() ) {
 		renderScaleDynamic = maxScale;
@@ -133,7 +140,8 @@ static float R_UpdateRenderScale( void ) {
 		renderScaleAvgFrameMsec = ( renderScaleAvgFrameMsec > 0.0f ) ? renderScaleAvgFrameMsec * 0.9f + frameMsec * 0.1f : (float)frameMsec;
 	}
 
-	const float targetMsec = 1000.0f / idMath::ClampInt( 15, 120, r_dynamicResolutionFPS.GetInteger() );
+	// aim 10% under the frame budget: a frame that runs over a locked 33 ms waits a whole extra vblank
+	const float targetMsec = 0.9f * 1000.0f / idMath::ClampInt( 15, 120, r_dynamicResolutionFPS.GetInteger() );
 	if ( renderScaleAvgFrameMsec > 0.0f && now - renderScaleLastAdjustTime >= 250 ) {
 		const float ratio = targetMsec / renderScaleAvgFrameMsec;
 		if ( ratio < 0.95f || ratio > 1.15f ) {

@@ -31,6 +31,40 @@ static EGLDisplay	s_display = EGL_NO_DISPLAY;
 static EGLContext	s_context = EGL_NO_CONTEXT;
 static EGLSurface	s_surface = EGL_NO_SURFACE;
 
+/*
+===================
+Frame rate lock
+
+r_fpsLock 30 presents a frame every second vblank (swap interval 2), so frames
+arrive evenly every 33.3 ms instead of swinging between 20 and 45 fps, and the
+spare time is left idle (cooler, longer battery). If the EGL driver caps the
+swap interval at 1, the lock falls back to waiting out the rest of the 33.3 ms
+before the swap. r_fpsLock 0 leaves r_swapInterval in charge.
+===================
+*/
+static idCVar r_fpsLock( "r_fpsLock", "30", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "lock the frame rate: 30 = every second vblank, 0 = off (r_swapInterval decides)", 0, 60 );
+
+static EGLint	s_maxSwapInterval = 1;
+static double	s_limiterFrameMsec = 0.0;	// > 0: software lock, frame period to hold
+static u64		s_lastSwapEndTick = 0;
+static double	s_lastSwapWaitMsec = 0.0;
+
+static void GLimp_ApplySwapInterval( void ) {
+	const int lock = r_fpsLock.GetInteger();
+	int interval = r_swapInterval.GetInteger();
+	s_limiterFrameMsec = 0.0;
+	if ( lock > 0 && lock < 60 ) {
+		interval = Max( 1, 60 / lock );
+		if ( interval > s_maxSwapInterval ) {
+			s_limiterFrameMsec = 1000.0 / lock;
+			interval = 1;
+		}
+	}
+	eglSwapInterval( s_display, interval );
+	common->Printf( "swap interval %d (driver max %d)%s\n", interval, s_maxSwapInterval,
+		s_limiterFrameMsec > 0.0 ? va( ", frame rate held at %d by waiting", lock ) : "" );
+}
+
 static void GLimp_DestroyEGL( void ) {
 	if ( s_display != EGL_NO_DISPLAY ) {
 		eglMakeCurrent( s_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT );
@@ -117,7 +151,10 @@ bool GLimp_Init( glimpParms_t parms ) {
 		return false;
 	}
 
-	eglSwapInterval( s_display, r_swapInterval.GetInteger() );
+	if ( !eglGetConfigAttrib( s_display, config, EGL_MAX_SWAP_INTERVAL, &s_maxSwapInterval ) ) {
+		s_maxSwapInterval = 1;
+	}
+	GLimp_ApplySwapInterval();
 
 	glConfig.vidWidth = SWITCH_SCREEN_WIDTH;
 	glConfig.vidHeight = SWITCH_SCREEN_HEIGHT;
@@ -154,14 +191,31 @@ float Switch_TakeSwapMsec( void ) {
 	return msec;
 }
 
+// time the last swap spent waiting (vblank or the frame rate lock); dynamic
+// resolution subtracts it to see how long the frame actually worked
+float GLimp_LastSwapWaitMsec( void ) {
+	return (float)s_lastSwapWaitMsec;
+}
+
 void GLimp_SwapBuffers( void ) {
-	if ( r_swapInterval.IsModified() ) {
+	if ( r_swapInterval.IsModified() || r_fpsLock.IsModified() ) {
 		r_swapInterval.ClearModified();
-		eglSwapInterval( s_display, r_swapInterval.GetInteger() );
+		r_fpsLock.ClearModified();
+		GLimp_ApplySwapInterval();
 	}
 	const u64 start = armGetSystemTick();
+	if ( s_limiterFrameMsec > 0.0 && s_lastSwapEndTick != 0 ) {
+		const double elapsedMsec = armTicksToNs( start - s_lastSwapEndTick ) / 1000000.0;
+		// the swap itself rarely blocks at interval 1, so wait out nearly the whole period
+		const double sleepMsec = s_limiterFrameMsec - elapsedMsec - 0.5;
+		if ( sleepMsec > 0.0 ) {
+			svcSleepThread( (s64)( sleepMsec * 1000000.0 ) );
+		}
+	}
 	eglSwapBuffers( s_display, s_surface );
-	s_swapMsecAccum += armTicksToNs( armGetSystemTick() - start ) / 1000000.0;
+	s_lastSwapEndTick = armGetSystemTick();
+	s_lastSwapWaitMsec = armTicksToNs( s_lastSwapEndTick - start ) / 1000000.0;
+	s_swapMsecAccum += s_lastSwapWaitMsec;
 }
 
 void GLimp_SetGamma( unsigned short red[256], unsigned short green[256], unsigned short blue[256] ) {

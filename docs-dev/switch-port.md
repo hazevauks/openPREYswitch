@@ -202,8 +202,23 @@ x-right axis. `in_gyroDebug 1` prints raw values if a controller disagrees.
    front end ~2-5 ms: Mesa validates state and re-uploads program constants on
    every draw. `r_cacheProgramParms` (default 1) skips ARB env parameter updates
    that do not change the value; `com_logPerf` also reports draws and skipped
-   updates per frame. The structural next step is running the back end on its
-   own core (the vertex cache already has a CPU-memory mode for that).
+   updates per frame. Hardware test: no measurable change (22.8 vs 22.9 ms back
+   end at 1160 draws), so constant uploads are not the cost. Standing still, the
+   back end time follows the resolution (half the resolution doubled the frame
+   rate) and Status Monitor shows GPU 99% and ~15 GB/s of RAM traffic, so fill
+   rate/bandwidth dominates. Turning the camera costs up to 4x the back end time
+   at a similar draw count, with repeated ~100 ms frames and no file reads.
+   Diagnostics for that: `com_logPerf` reports vertex cache `buffers` created per
+   frame (glBufferData on fresh storage; animated models re-create theirs every
+   frame), `temp` KB and `overflow` frames; `com_logHitches` breaks each slow
+   frame into game/front/back/swap and buffers; `r_perfGpuSync 1` (diagnostic)
+   waits for the GPU before each swap and reports that wait, splitting the back
+   end into CPU and GPU time.
+   `r_fpsLock` (default 30) presents every second vblank (swap interval 2; if the
+   EGL driver caps the interval at 1 it waits out the 33.3 ms instead). Dynamic
+   resolution subtracts the swap wait, so it judges the time a frame worked, and
+   aims 10% under the frame budget. The structural next step is running the back
+   end on its own core (the vertex cache already has a CPU-memory mode for that).
 1. Performance on the Tegra X1. Hardware test at stock clocks: 22 fps at full
    resolution, 43 fps at half (fill-rate bound; shadows cost ~10%). Dynamic
    resolution is on by default on Switch: `r_dynamicResolution`,
@@ -215,6 +230,6 @@ x-right axis. `in_gyroDebug 1` prints raw values if a controller disagrees.
    was slower than devkitPro Mesa 20.1 (17-18 fps vs 21-22 at the same spot, full
    resolution) and showed rendering glitches. The build stays on devkitPro Mesa;
    `-Dswitch_mesa_sdk` is kept for re-testing newer versions of that port.
-   GLthread would not help here: the bottleneck is GPU fill rate.
+   GLthread would not help here while GPU fill rate is the bottleneck.
 3. Audio: check which OpenAL Soft backend the devkitPro build uses.
 4. Multiplayer: real sockets in `switch_net.cpp`.
