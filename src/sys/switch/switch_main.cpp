@@ -63,14 +63,28 @@ static void Switch_WriteFatalFile( const char *msg ) {
 	}
 }
 
+static pthread_t		s_mainThread;
+static volatile int	s_exitCode = EXIT_SUCCESS;
+
+/*
+================
+Switch_Exit
+
+Quit and error paths run on the engine thread, but the process must leave from
+the main thread. libnx hands control back to the homebrew loader on whichever
+thread calls exit(), so exiting from the engine thread left hbmenu running on
+the engine thread's heap-allocated stack while the real main thread stayed
+blocked in pthread_join. The system then crashed when the process closed
+("Closing software"). The engine thread now just ends, and main() returns.
+================
+*/
 static void Switch_Exit( int ret ) {
 	Switch_StopAsyncThread();
-	if ( s_nxlinkActive ) {
-		socketExit();
-		s_nxlinkActive = false;
+	s_exitCode = ret;
+	if ( pthread_equal( pthread_self(), s_mainThread ) ) {
+		exit( ret );
 	}
-	// exit() runs atexit handlers and returns to the homebrew menu.
-	exit( ret );
+	pthread_exit( NULL );
 }
 
 void Sys_Quit( void ) {
@@ -665,6 +679,7 @@ static void *Switch_EngineThread( void * ) {
 int main( int argc, char **argv ) {
 	s_argc = argc;
 	s_argv = argv;
+	s_mainThread = pthread_self();
 
 	// stdout over the network when launched with `nxlink -s`
 	if ( __nxlink_host.s_addr != 0 && R_SUCCEEDED( socketInitializeDefault() ) ) {
@@ -691,7 +706,13 @@ int main( int argc, char **argv ) {
 	}
 	pthread_attr_destroy( &attr );
 
-	// The engine never returns: it leaves through Sys_Quit/Sys_Error -> exit().
+	// The engine thread ends through Sys_Quit/Sys_Error -> Switch_Exit; the
+	// process then leaves normally from here, on the main thread.
 	pthread_join( engineThread, NULL );
-	return EXIT_SUCCESS;
+
+	if ( s_nxlinkActive ) {
+		socketExit();
+		s_nxlinkActive = false;
+	}
+	return s_exitCode;
 }
