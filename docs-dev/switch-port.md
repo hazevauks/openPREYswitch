@@ -4,6 +4,9 @@ Homebrew port of OpenPrey to the Nintendo Switch using devkitPro (devkitA64 + li
 Players supply their own retail Prey (2006) `.pk4` files; nothing from the game is
 distributed.
 
+Working handbook (Portuguese): rules, build/test loop, pitfalls and measurements
+in [switch-port-handbook.md](switch-port-handbook.md).
+
 ## Status
 
 | Piece | State |
@@ -60,8 +63,8 @@ not touch the devkitPro switch-mesa package.
 ```sh
 # long link lines go through a response file, which MSYS2 does not path-convert
 export MESON_RSP_THRESHOLD=2147483647
-```sh
-meson setup builddir-switch-mesa26 --cross-file tools/switch/meson/switch-cross.ini \n    -Dbuildtype=release -Dswitch_mesa_sdk=<mesa-switch>/mesa-install/opt/devkitpro/portlibs/switch
+meson setup builddir-switch-mesa26 --cross-file tools/switch/meson/switch-cross.ini \
+    -Dbuildtype=release -Dswitch_mesa_sdk=<mesa-switch>/mesa-install/opt/devkitpro/portlibs/switch
 ninja -C builddir-switch-mesa26
 ```
 
