@@ -88,9 +88,21 @@ sdmc:/switch/openprey/
                           the repo keeps its sources in basepy/)
 ```
 
-This folder is also `fs_savepath`: configs, saves and the log
-(`basepr/logs/openprey.log`, enabled by default) are written there. A fatal error
-also writes `openprey_error.txt` to the folder.
+This folder is also `fs_savepath`: configs, saves and the log are written there.
+The log (`base/logs/openprey.log`, on by default) is flushed line by line, so its
+last line is the last thing the engine printed. Two more files appear on failure:
+
+- `openprey_error.txt`: the message of a fatal error. It is written before the
+  engine shuts down, so it survives a crash during shutdown.
+- `openprey_crash.txt`: CPU exceptions caught by the libnx exception handler,
+  with PC, LR, a frame-pointer backtrace and registers. Resolve the `elf offset`
+  values against the matching build:
+
+  ```sh
+  aarch64-none-elf-addr2line -f -C -e builddir-switch/OpenPrey-client_arm64.elf <offset>...
+  ```
+
+  Keep the `.elf` of every build you test: offsets only match their own build.
 
 ## Controls
 
@@ -104,7 +116,9 @@ for example `bind JOY15 _attack`.
 
 ## Next steps
 
-1. First boot on hardware: read `basepr/logs/openprey.log` and `openprey_error.txt`.
+1. First boot on hardware reached the loading screen. It then died in
+   `LoadGameDLL` because `FindDLL` looked for a game module file (fixed:
+   `FindDLL` short-circuits the linked-in module on `__SWITCH__`).
 2. Audio: check which OpenAL Soft backend the devkitPro build uses.
 3. Default controller binds, and a software keyboard for the console.
 4. Performance on the Tegra X1 (docked resolution, post-processing defaults).

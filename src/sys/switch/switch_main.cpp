@@ -90,8 +90,117 @@ void Sys_Error( const char *error, ... ) {
 	Switch_Exit( EXIT_FAILURE );
 }
 
+/*
+================
+Sys_SetFatalError
+
+common->FatalError calls this before shutting every subsystem down, and only
+calls Sys_Error afterwards. Write the message now: a partially initialized
+engine can crash during that shutdown and the message would be lost.
+================
+*/
 void Sys_SetFatalError( const char *error ) {
-	// Sys_Error writes the message to SWITCH_BASE_PATH/openprey_error.txt.
+	Switch_WriteFatalFile( error );
+}
+
+/*
+============================================================================
+CRASH HANDLER
+
+libnx calls __libnx_exception_handler for CPU exceptions (bad memory
+access, undefined instruction, ...) when an exception stack is provided.
+It writes SWITCH_BASE_PATH/openprey_crash.txt with the faulting PC, LR and
+a frame-pointer backtrace. Addresses are also given as offsets into the
+executable, so they can be resolved against OpenPrey-client_arm64.elf:
+
+	aarch64-none-elf-addr2line -f -C -e OpenPrey-client_arm64.elf <offset>...
+============================================================================
+*/
+
+extern "C" {
+	u32		__nx_exception_ignoredebug = 1;
+	alignas( 16 ) u8 __nx_exception_stack[0x8000];
+	u64		__nx_exception_stack_size = sizeof( __nx_exception_stack );
+	void	__libnx_exception_handler( ThreadExceptionDump *ctx );
+}
+
+static char s_crashText[8192];
+
+static bool Switch_IsReadable( u64 addr ) {
+	MemoryInfo info;
+	u32 pageInfo;
+	if ( R_FAILED( svcQueryMemory( &info, &pageInfo, addr ) ) ) {
+		return false;
+	}
+	return ( info.perm & Perm_R ) != 0 && info.type != MemType_Unmapped;
+}
+
+void __libnx_exception_handler( ThreadExceptionDump *ctx ) {
+	// the executable's code region, whose start is the ELF's address 0
+	MemoryInfo codeInfo = {};
+	u32 pageInfo;
+	svcQueryMemory( &codeInfo, &pageInfo, (u64)&__libnx_exception_handler );
+	const u64 codeStart = codeInfo.addr;
+	const u64 codeEnd = codeInfo.addr + codeInfo.size;
+
+	size_t len = 0;
+	auto append = [&]( const char *fmt, ... ) {
+		if ( len >= sizeof( s_crashText ) ) {
+			return;
+		}
+		va_list ap;
+		va_start( ap, fmt );
+		const int n = idStr::vsnPrintf( s_crashText + len, (int)( sizeof( s_crashText ) - len ), fmt, ap );
+		va_end( ap );
+		if ( n > 0 ) {
+			len += (size_t)n;
+		}
+	};
+	auto appendAddress = [&]( const char *label, u64 addr ) {
+		if ( addr >= codeStart && addr < codeEnd ) {
+			append( "%-4s 0x%016llx  (elf offset 0x%llx)\n", label, (unsigned long long)addr, (unsigned long long)( addr - codeStart ) );
+		} else {
+			append( "%-4s 0x%016llx\n", label, (unsigned long long)addr );
+		}
+	};
+
+	append( "OpenPrey crash\n" );
+	append( "exception 0x%x  far 0x%016llx  esr 0x%x\n", ctx->error_desc, (unsigned long long)ctx->far.x, ctx->esr );
+	append( "code 0x%016llx..0x%016llx\n", (unsigned long long)codeStart, (unsigned long long)codeEnd );
+	appendAddress( "pc", ctx->pc.x );
+	appendAddress( "lr", ctx->lr.x );
+	append( "sp   0x%016llx\nfp   0x%016llx\n", (unsigned long long)ctx->sp.x, (unsigned long long)ctx->fp.x );
+
+	append( "backtrace:\n" );
+	u64 fp = ctx->fp.x;
+	for ( int depth = 0; depth < 64 && fp && ( fp & 7 ) == 0; depth++ ) {
+		if ( !Switch_IsReadable( fp ) || !Switch_IsReadable( fp + 8 ) ) {
+			break;
+		}
+		const u64 nextFp = ( (const u64 *)fp )[0];
+		const u64 ret = ( (const u64 *)fp )[1];
+		char label[8];
+		idStr::snPrintf( label, sizeof( label ), "#%d", depth );
+		appendAddress( label, ret );
+		if ( nextFp <= fp ) {
+			break;
+		}
+		fp = nextFp;
+	}
+
+	append( "registers:\n" );
+	for ( int i = 0; i < 29; i++ ) {
+		append( "x%-2d 0x%016llx%s", i, (unsigned long long)ctx->cpu_gprs[i].x, ( i % 3 == 2 ) ? "\n" : "  " );
+	}
+	append( "\n" );
+
+	FILE *f = fopen( SWITCH_BASE_PATH "/openprey_crash.txt", "wb" );
+	if ( f ) {
+		fwrite( s_crashText, 1, len < sizeof( s_crashText ) ? len : sizeof( s_crashText ) - 1, f );
+		fclose( f );
+	}
+
+	svcExitProcess();
 }
 
 /*

@@ -4620,6 +4620,15 @@ void idFileSystemLocal::FindDLL( const char *name, char _dllPath[ MAX_OSPATH ], 
 	sys->DLL_GetFileName( name, dllName, MAX_OSPATH );
 	dllHash = HashFileName( dllName );
 
+#ifdef __SWITCH__
+	// The game module is linked into the executable on Switch (basepy/meson.build),
+	// so there is no file to find, extract or checksum; Sys_DLL_Load resolves it.
+	if ( idStr::Icmpn( dllName, "game", 4 ) == 0 ) {
+		idStr::Copynz( _dllPath, dllName, MAX_OSPATH );
+		return;
+	}
+#endif
+
 #if ID_FAKE_PURE
 	if ( 1 ) {
 #else
