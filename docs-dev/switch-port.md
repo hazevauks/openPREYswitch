@@ -65,6 +65,9 @@ meson setup builddir-switch-mesa26 --cross-file tools/switch/meson/switch-cross.
 ninja -C builddir-switch-mesa26
 ```
 
+Status: not recommended yet (slower and with rendering glitches on hardware; see
+Next steps).
+
 This produces `OpenPrey-mesa-sdk.nro` (title "OpenPrey (Mesa SDK)"), which can sit
 next to `OpenPrey.nro`. Runtime switches for that Mesa (environment, set before
 `eglInitialize`): `MESA_SWITCH_GL_DRIVER=zink|nvc0`, `MESA_SWITCH_GLTHREAD=0|1`.
@@ -151,7 +154,11 @@ a command, D-pad up/down walks the history, L/R scroll, and **B** or **-** close
    `r_dynamicResolutionFPS` (30), `r_dynamicResolutionMin` (50), `r_renderScale`
    (max, %). `com_showFPS 1` shows the 3D resolution in use. SSAO and bloom
    default to off on Switch (`OPENPREY_POSTFX_DEFAULT`).
-2. Mesa 26 experiment (danfromtico/mesa-switch): newer nouveau NVC0 GL, optional
-   Zink (`MESA_SWITCH_GL_DRIVER=zink`) and GLthread (`MESA_SWITCH_GLTHREAD=1`).
+2. Mesa 26 experiment (danfromtico/mesa-switch, 26.2.2 NVC0), tested on hardware:
+   the GL probe passes (GL 4.3 compatibility, ARB programs, S3TC), but in game it
+   was slower than devkitPro Mesa 20.1 (17-18 fps vs 21-22 at the same spot, full
+   resolution) and showed rendering glitches. The build stays on devkitPro Mesa;
+   `-Dswitch_mesa_sdk` is kept for re-testing newer versions of that port.
+   GLthread would not help here: the bottleneck is GPU fill rate.
 3. Audio: check which OpenAL Soft backend the devkitPro build uses.
 4. Multiplayer: real sockets in `switch_net.cpp`.
