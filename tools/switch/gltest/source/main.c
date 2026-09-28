@@ -27,7 +27,9 @@ Results are shown on screen and written to sdmc:/openprey_gltest.txt.
 #include <GL/gl.h>
 #include <GL/glext.h>
 
+#ifndef REPORT_PATH
 #define REPORT_PATH "sdmc:/openprey_gltest.txt"
+#endif
 #define SCREEN_W 1280
 #define SCREEN_H 720
 

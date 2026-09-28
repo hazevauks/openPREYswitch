@@ -75,6 +75,22 @@ LIBS	:= -lEGL -lglapi -ldrm_nouveau -lstdc++ -lm -lnx
 #---------------------------------------------------------------------------------
 LIBDIRS	:= $(PORTLIBS) $(LIBNX)
 
+#---------------------------------------------------------------------------------
+# Alternative Mesa SDK (e.g. danfromtico/mesa-switch, staged by its build-opengl.sh):
+#   make MESA_SDK=<sdk>/opt/devkitpro/portlibs/switch
+# Builds openprey_gltest_mesa_sdk.nro, which writes sdmc:/openprey_gltest_mesa_sdk.txt.
+# That port has its own Horizon GPU backend, so no libdrm_nouveau.
+#---------------------------------------------------------------------------------
+ifneq ($(strip $(MESA_SDK)),)
+TARGET		:=	openprey_gltest_mesa_sdk
+BUILD		:=	build_mesa_sdk
+APP_TITLE	:=	OpenPrey GL Test (Mesa SDK)
+LIBDIRS	:= $(MESA_SDK) $(PORTLIBS) $(LIBNX)
+LIBS	:= -lEGL -lglapi -lexpat -lz -lstdc++ -lm -lnx
+CFLAGS	+=	-DREPORT_PATH=\"sdmc:/openprey_gltest_mesa_sdk.txt\"
+CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions
+endif
+
 
 #---------------------------------------------------------------------------------
 # no real need to edit anything past this point unless you need to add additional

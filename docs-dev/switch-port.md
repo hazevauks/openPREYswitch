@@ -47,6 +47,28 @@ The result is `builddir-switch/OpenPrey.nro`. Useful partial targets:
 - `ninja -C builddir-switch libopenprey_game_idlib.a`
 - `ninja -C builddir-switch basepy/libgame_arm64.a`
 
+### Alternative Mesa (experimental)
+
+[danfromtico/mesa-switch](https://github.com/danfromtico/mesa-switch) is a Mesa 26 port with its
+own Horizon GPU backend: a newer nouveau NVC0 GL driver, optional Zink on NVK, and
+no libdrm_nouveau. Build it OpenGL-only with its `build-opengl.sh`, using a copy of
+its `switch_cross_file.txt` without the `rust`/`bindgen` lines (`CROSS_FILE=...`),
+from the devkitPro MSYS2 shell. It needs `python-mako`, `python-yaml`, `bison`,
+`flex` and an up-to-date `libexpat`. It stages into its own `mesa-install/` and does
+not touch the devkitPro switch-mesa package.
+
+```sh
+# long link lines go through a response file, which MSYS2 does not path-convert
+export MESON_RSP_THRESHOLD=2147483647
+```sh
+meson setup builddir-switch-mesa26 --cross-file tools/switch/meson/switch-cross.ini \n    -Dbuildtype=release -Dswitch_mesa_sdk=<mesa-switch>/mesa-install/opt/devkitpro/portlibs/switch
+ninja -C builddir-switch-mesa26
+```
+
+This produces `OpenPrey-mesa-sdk.nro` (title "OpenPrey (Mesa SDK)"), which can sit
+next to `OpenPrey.nro`. Runtime switches for that Mesa (environment, set before
+`eglInitialize`): `MESA_SWITCH_GL_DRIVER=zink|nvc0`, `MESA_SWITCH_GLTHREAD=0|1`.
+
 ## Design decisions
 
 - **Game module as a "fake DLL".** Switch homebrew cannot `dlopen`, but the game

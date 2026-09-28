@@ -68,3 +68,4 @@ $tmp/
 
 # Nintendo Switch cross build
 builddir-switch/
+builddir-switch-*/

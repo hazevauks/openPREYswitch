@@ -35,3 +35,18 @@ The same report is saved to `sdmc:/openprey_gltest.txt`.
 
 `[FAIL]` lines are hard requirements of the current renderer. `[WARN]` lines are
 optional paths with fallbacks.
+
+## Alternative Mesa SDK
+
+To test another Mesa build, such as
+[danfromtico/mesa-switch](https://github.com/danfromtico/mesa-switch) staged with
+its `build-opengl.sh`, point `MESA_SDK` at the staged portlibs prefix:
+
+```sh
+make MESA_SDK=<mesa-switch>/mesa-install/opt/devkitpro/portlibs/switch
+```
+
+This builds `openprey_gltest_mesa_sdk.nro` and writes its report to
+`sdmc:/openprey_gltest_mesa_sdk.txt`, so both probes can be compared. The engine
+has the matching Meson option `-Dswitch_mesa_sdk=<prefix>`
+(see `docs-dev/switch-port.md`).

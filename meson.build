@@ -280,12 +280,29 @@ if build_engine
   elif is_switch
     # devkitPro portlibs: SDL2 for window/input, Mesa (EGL + glapi + nouveau) for OpenGL.
     # Mesa is C++ and needs libstdc++/libm even when linked from C.
+    switch_mesa_sdk = get_option('switch_mesa_sdk')
+    if switch_mesa_sdk == ''
+      switch_gl_deps = [
+        cc.find_library('EGL', required: true),
+        cc.find_library('glapi', required: true),
+        cc.find_library('drm_nouveau', required: true),
+      ]
+    else
+      # Alternative Mesa (e.g. danfromtico/mesa-switch): its own Horizon GPU backend, so
+      # no libdrm_nouveau. Its headers and archives take precedence over portlibs.
+      switch_mesa_lib_dir = switch_mesa_sdk / 'lib'
+      switch_gl_deps = [
+        declare_dependency(compile_args: ['-I' + (switch_mesa_sdk / 'include')]),
+        cc.find_library('EGL', dirs: [switch_mesa_lib_dir], required: true),
+        cc.find_library('glapi', dirs: [switch_mesa_lib_dir], required: true),
+        cc.find_library('expat', dirs: [switch_mesa_lib_dir], required: true),
+        cc.find_library('z', required: true),
+      ]
+      message('Switch: using the Mesa SDK at ' + switch_mesa_sdk)
+    endif
+    deps += [dependency('threads', required: true), cc.find_library('SDL2', required: true)]
+    deps += switch_gl_deps
     deps += [
-      dependency('threads', required: true),
-      cc.find_library('SDL2', required: true),
-      cc.find_library('EGL', required: true),
-      cc.find_library('glapi', required: true),
-      cc.find_library('drm_nouveau', required: true),
       cc.find_library('stdc++', required: true),
       cc.find_library('m', required: true),
       cc.find_library('nx', required: true),
@@ -529,16 +546,21 @@ if is_switch and build_engine
   nacptool = find_program('nacptool', dirs: [dkp_tools_dir], required: true)
   elf2nro = find_program('elf2nro', dirs: [dkp_tools_dir], required: true)
 
+  # Builds against an alternative Mesa SDK get their own name and title, so both
+  # can sit on the SD card side by side.
+  switch_nro_name = get_option('switch_mesa_sdk') == '' ? 'OpenPrey' : 'OpenPrey-mesa-sdk'
+  switch_app_title = get_option('switch_mesa_sdk') == '' ? 'OpenPrey' : 'OpenPrey (Mesa SDK)'
+
   switch_nacp = custom_target(
     'switch_nacp',
-    output: 'OpenPrey.nacp',
-    command: [nacptool, '--create', 'OpenPrey', 'OpenPrey Switch port', meson.project_version(), '@OUTPUT@'],
+    output: switch_nro_name + '.nacp',
+    command: [nacptool, '--create', switch_app_title, 'OpenPrey Switch port', meson.project_version(), '@OUTPUT@'],
   )
 
   custom_target(
     'switch_nro',
     input: switch_engine_elf,
-    output: 'OpenPrey.nro',
+    output: switch_nro_name + '.nro',
     command: [
       elf2nro, '@INPUT@', '@OUTPUT@',
       '--nacp=' + switch_nacp.full_path(),
