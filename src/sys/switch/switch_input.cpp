@@ -9,10 +9,12 @@ In game, buttons and sticks use the same K_JOY keys and joystick axes as the
 Windows SDL3 backend (src/sys/win32/win_sdl3.cpp), so binds carry over:
 
 	L = JOY1   R = JOY2   B = JOY3 (south)   A = JOY4 (east)
-	X = JOY5 (north)      Y = JOY6 (west)    - = JOY8
+	X = JOY5 (north)      Y = JOY6 (west)
 	D-pad up/down/right/left = JOY9..JOY12   L3 = JOY13   R3 = JOY14
 	ZR = JOY15 (right trigger)               ZL = JOY16 (left trigger)
-	+ = Escape (opens and closes the menu)
+	+ = Escape (opens and closes the menu)   - = console key
+
+Default binds for those keys are in s_defaultBinds (fire, jump, reload, ...).
 
 	left stick  -> AXIS_YAW / AXIS_PITCH (move), right stick -> AXIS_SIDE /
 	AXIS_FORWARD (look), AXIS_ROLL = 127 marks the dedicated look stick.
@@ -20,9 +22,12 @@ Windows SDL3 backend (src/sys/win32/win_sdl3.cpp), so binds carry over:
 The triggers are digital on Switch, so unlike SDL3 they only act as buttons
 and do not feed AXIS_UP.
 
-While a GUI is active (menus, PDA, console) the left stick moves the cursor,
-A clicks (mouse 1) and B backs out (Escape). Touching the screen places the
-cursor and clicks.
+While a GUI is active (menus) the left stick moves the cursor, A clicks
+(mouse 1) and B backs out (Escape). Touching the screen places the cursor and
+clicks.
+
+While the console is down, A opens the system keyboard to type a command,
+the D-pad up/down walks the command history, L/R scroll, and B or - close it.
 
 ===========================================================================
 */
@@ -72,34 +77,73 @@ static int							s_polledJoystickCount = 0;
 static bool							s_inputInitialized = false;
 static PadState						s_pad;
 static u64							s_buttonsDown = 0;		// buttons currently reported as pressed
-static bool							s_menuMode = false;
 static float						s_cursorRemainderX = 0.0f;
 static float						s_cursorRemainderY = 0.0f;
 static bool							s_touchDown = false;
 
+typedef enum {
+	INPUT_MODE_GAME,
+	INPUT_MODE_MENU,		// a GUI is active
+	INPUT_MODE_CONSOLE		// the console is down
+} switchInputMode_t;
+
+static switchInputMode_t	s_inputMode = INPUT_MODE_GAME;
+
+// pseudo keys, handled here instead of being posted to the engine
+static const int KEY_NONE				= 0;
+static const int KEY_CONSOLE_TOGGLE		= -1;	// posts the console key
+static const int KEY_SOFTWARE_KEYBOARD	= -2;	// opens the system keyboard for a console command
+
 typedef struct {
 	u64		button;
 	int		gameKey;	// key while playing
-	int		menuKey;	// key while a GUI is active (0 = same as gameKey)
+	int		menuKey;	// key while a GUI is active (KEY_NONE = same as gameKey)
+	int		consoleKey;	// key while the console is down (KEY_NONE = ignored)
 } switchButtonMap_t;
 
 static const switchButtonMap_t s_buttonMap[] = {
-	{ HidNpadButton_L,			K_JOY1,		0 },
-	{ HidNpadButton_R,			K_JOY2,		0 },
-	{ HidNpadButton_B,			K_JOY3,		K_ESCAPE },
-	{ HidNpadButton_A,			K_JOY4,		K_MOUSE1 },
-	{ HidNpadButton_X,			K_JOY5,		0 },
-	{ HidNpadButton_Y,			K_JOY6,		0 },
-	{ HidNpadButton_Plus,		K_ESCAPE,	0 },
-	{ HidNpadButton_Minus,		K_JOY8,		0 },
-	{ HidNpadButton_Up,			K_JOY9,		K_UPARROW },
-	{ HidNpadButton_Down,		K_JOY10,	K_DOWNARROW },
-	{ HidNpadButton_Right,		K_JOY11,	K_RIGHTARROW },
-	{ HidNpadButton_Left,		K_JOY12,	K_LEFTARROW },
-	{ HidNpadButton_StickL,		K_JOY13,	0 },
-	{ HidNpadButton_StickR,		K_JOY14,	0 },
-	{ HidNpadButton_ZR,			K_JOY15,	0 },
-	{ HidNpadButton_ZL,			K_JOY16,	0 },
+	{ HidNpadButton_L,			K_JOY1,				KEY_NONE,		K_PGUP },
+	{ HidNpadButton_R,			K_JOY2,				KEY_NONE,		K_PGDN },
+	{ HidNpadButton_B,			K_JOY3,				K_ESCAPE,		KEY_CONSOLE_TOGGLE },
+	{ HidNpadButton_A,			K_JOY4,				K_MOUSE1,		KEY_SOFTWARE_KEYBOARD },
+	{ HidNpadButton_X,			K_JOY5,				KEY_NONE,		KEY_NONE },
+	{ HidNpadButton_Y,			K_JOY6,				KEY_NONE,		KEY_NONE },
+	{ HidNpadButton_Plus,		K_ESCAPE,			KEY_NONE,		KEY_NONE },
+	{ HidNpadButton_Minus,		KEY_CONSOLE_TOGGLE,	KEY_NONE,		KEY_CONSOLE_TOGGLE },
+	{ HidNpadButton_Up,			K_JOY9,				K_UPARROW,		K_UPARROW },
+	{ HidNpadButton_Down,		K_JOY10,			K_DOWNARROW,	K_DOWNARROW },
+	{ HidNpadButton_Right,		K_JOY11,			K_RIGHTARROW,	KEY_NONE },
+	{ HidNpadButton_Left,		K_JOY12,			K_LEFTARROW,	KEY_NONE },
+	{ HidNpadButton_StickL,		K_JOY13,			KEY_NONE,		KEY_NONE },
+	{ HidNpadButton_StickR,		K_JOY14,			KEY_NONE,		KEY_NONE },
+	{ HidNpadButton_ZR,			K_JOY15,			KEY_NONE,		KEY_NONE },
+	{ HidNpadButton_ZL,			K_JOY16,			KEY_NONE,		KEY_NONE },
+};
+
+/*
+Default binds, applied only to keys the player has not bound (Switch_ApplyDefaultBinds),
+so anything rebound from the menu or console is kept.
+*/
+typedef struct {
+	int				key;
+	const char *	command;
+} switchDefaultBind_t;
+
+static const switchDefaultBind_t s_defaultBinds[] = {
+	{ K_JOY15,	"_attack" },		// ZR: fire
+	{ K_JOY16,	"_attackalt" },		// ZL: alternate fire
+	{ K_JOY3,	"_moveUp" },		// B: jump
+	{ K_JOY4,	"_impulse13" },		// A: reload
+	{ K_JOY6,	"_impulse54" },		// Y: spirit walk
+	{ K_JOY5,	"_impulse16" },		// X: lighter
+	{ K_JOY2,	"_impulse14" },		// R: next weapon
+	{ K_JOY1,	"_impulse15" },		// L: previous weapon
+	{ K_JOY13,	"_speed" },			// L3: run
+	{ K_JOY14,	"_zoom" },			// R3: zoom
+	{ K_JOY9,	"_impulse25" },		// D-pad up: throw grenade
+	{ K_JOY10,	"_moveDown" },		// D-pad down: crouch
+	{ K_JOY11,	"_impulse14" },		// D-pad right: next weapon
+	{ K_JOY12,	"_impulse15" },		// D-pad left: previous weapon
 };
 static const int NUM_BUTTON_MAPS = sizeof( s_buttonMap ) / sizeof( s_buttonMap[0] );
 
@@ -176,6 +220,49 @@ per-frame updates
 ================
 */
 
+/*
+================
+Switch_ConsoleKeyboard
+
+Asks for a console command with the system keyboard applet and types it
+into the console, followed by Enter.
+================
+*/
+static void Switch_ConsoleKeyboard( void ) {
+	SwkbdConfig kbd;
+	char text[256] = {};
+	if ( R_FAILED( swkbdCreate( &kbd, 0 ) ) ) {
+		return;
+	}
+	swkbdConfigMakePresetDefault( &kbd );
+	swkbdConfigSetHeaderText( &kbd, "OpenPrey console" );
+	swkbdConfigSetGuideText( &kbd, "Command, e.g. com_showFPS 1" );
+	const Result rc = swkbdShow( &kbd, text, sizeof( text ) );
+	swkbdClose( &kbd );
+	if ( R_FAILED( rc ) || !text[0] ) {
+		return;
+	}
+	for ( const char *c = text; *c; c++ ) {
+		const unsigned char ch = (unsigned char)*c;
+		if ( ch >= 32 && ch < 127 ) {	// the console input line is ASCII
+			Switch_QueEvent( SE_CHAR, ch, 0, 0, NULL );
+		}
+	}
+	Switch_PostKey( K_ENTER, true );
+	Switch_PostKey( K_ENTER, false );
+}
+
+static int Switch_KeyForMode( const switchButtonMap_t &map ) {
+	switch ( s_inputMode ) {
+		case INPUT_MODE_CONSOLE:
+			return map.consoleKey;
+		case INPUT_MODE_MENU:
+			return map.menuKey != KEY_NONE ? map.menuKey : map.gameKey;
+		default:
+			return map.gameKey;
+	}
+}
+
 static void Switch_UpdateButtons( u64 held ) {
 	const u64 changed = held ^ s_buttonsDown;
 	if ( !changed ) {
@@ -187,7 +274,13 @@ static void Switch_UpdateButtons( u64 held ) {
 			continue;
 		}
 		if ( held & map.button ) {
-			const int key = ( s_menuMode && map.menuKey ) ? map.menuKey : map.gameKey;
+			int key = Switch_KeyForMode( map );
+			if ( key == KEY_SOFTWARE_KEYBOARD ) {
+				Switch_ConsoleKeyboard();
+				key = KEY_NONE;
+			} else if ( key == KEY_CONSOLE_TOGGLE ) {
+				key = Sys_GetConsoleKey( false );
+			}
 			s_pressedAs[i] = key;
 			Switch_PostKey( key, true );
 		} else if ( s_pressedAs[i] ) {
@@ -196,6 +289,22 @@ static void Switch_UpdateButtons( u64 held ) {
 		}
 	}
 	s_buttonsDown = held;
+}
+
+/*
+================
+Switch_ApplyDefaultBinds
+
+Called once after common->Init, when the saved config has been executed.
+================
+*/
+void Switch_ApplyDefaultBinds( void ) {
+	for ( size_t i = 0; i < sizeof( s_defaultBinds ) / sizeof( s_defaultBinds[0] ); i++ ) {
+		const char *current = idKeyInput::GetBinding( s_defaultBinds[i].key );
+		if ( !current || !current[0] ) {
+			idKeyInput::SetBinding( s_defaultBinds[i].key, s_defaultBinds[i].command );
+		}
+	}
 }
 
 static void Switch_UpdateMenuCursor( const HidAnalogStickState &left ) {
@@ -267,13 +376,20 @@ void Switch_PollInput( void ) {
 	padUpdate( &s_pad );
 
 	idUserInterface *gui = Switch_ActiveGUI();
-	const bool menuMode = ( gui != NULL );
-	if ( menuMode != s_menuMode ) {
+	switchInputMode_t mode = INPUT_MODE_GAME;
+	if ( console && console->Active() ) {
+		mode = INPUT_MODE_CONSOLE;
+	} else if ( gui != NULL ) {
+		mode = INPUT_MODE_MENU;
+	}
+	if ( mode != s_inputMode ) {
 		// release everything so no key stays stuck across the mode switch
 		Switch_ReleaseAllButtons();
 		Switch_ClearAxes();
 		s_cursorRemainderX = s_cursorRemainderY = 0.0f;
-		s_menuMode = menuMode;
+		s_inputMode = mode;
+		// keep a button held across the switch from firing again in the new mode
+		s_buttonsDown = padGetButtons( &s_pad );
 	}
 
 	Switch_UpdateButtons( padGetButtons( &s_pad ) );
@@ -281,16 +397,16 @@ void Switch_PollInput( void ) {
 	const HidAnalogStickState left = padGetStickPos( &s_pad, 0 );
 	const HidAnalogStickState right = padGetStickPos( &s_pad, 1 );
 
-	if ( s_menuMode || !in_joystick.GetBool() ) {
+	if ( s_inputMode != INPUT_MODE_GAME || !in_joystick.GetBool() ) {
 		Switch_ClearAxes();
-		if ( s_menuMode ) {
+		if ( s_inputMode == INPUT_MODE_MENU ) {
 			Switch_UpdateMenuCursor( left );
 		}
 	} else {
 		Switch_UpdateGameAxes( left, right );
 	}
 
-	Switch_UpdateTouch( gui );
+	Switch_UpdateTouch( s_inputMode == INPUT_MODE_MENU ? gui : NULL );
 }
 
 /*
@@ -305,7 +421,7 @@ void Sys_InitInput( void ) {
 	memset( s_pressedAs, 0, sizeof( s_pressedAs ) );
 	memset( s_joystickAxisState, 0, sizeof( s_joystickAxisState ) );
 	s_buttonsDown = 0;
-	s_menuMode = false;
+	s_inputMode = INPUT_MODE_GAME;
 	s_touchDown = false;
 	s_inputInitialized = true;
 }

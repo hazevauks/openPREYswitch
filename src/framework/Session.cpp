@@ -2096,6 +2096,16 @@ void idSessionLocal::SetBytesNeededForMapLoad( const char *mapName, int bytesNee
 	}
 }
 
+#ifdef __SWITCH__
+// src/sys/switch: CPU boost (system FastLoad mode) while a map loads. The guard
+// also ends the boost when an error unwinds out of ExecuteMapChange.
+void Sys_SetLoadingBoost( bool enable );
+struct idSwitchLoadingBoostGuard {
+	idSwitchLoadingBoostGuard() { Sys_SetLoadingBoost( true ); }
+	~idSwitchLoadingBoostGuard() { Sys_SetLoadingBoost( false ); }
+};
+#endif
+
 /*
 ===============
 idSessionLocal::ExecuteMapChange
@@ -2107,6 +2117,9 @@ Exits with mapSpawned = true
 ===============
 */
 void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
+#ifdef __SWITCH__
+	idSwitchLoadingBoostGuard loadingBoost;
+#endif
 	int		i;
 	bool	reloadingSameMap;
 	const bool playLevelLoadMusic =

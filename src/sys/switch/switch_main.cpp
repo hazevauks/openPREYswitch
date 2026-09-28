@@ -350,6 +350,29 @@ void Sys_ShutdownSymbols( void ) {
 }
 
 /*
+================
+Sys_SetLoadingBoost
+
+Raises the CPU clock while loading with the system FastLoad boost mode (the
+one retail games use on loading screens; it also drops the GPU to its
+minimum, which a loading screen does not need). Calls nest; the boost ends
+when every enable has been matched. Called around common->Init and
+idSessionLocal::ExecuteMapChange.
+================
+*/
+static int s_loadingBoostDepth = 0;
+
+void Sys_SetLoadingBoost( bool enable ) {
+	if ( enable ) {
+		if ( s_loadingBoostDepth++ == 0 ) {
+			appletSetCpuBoostMode( ApmCpuBoostMode_FastLoad );
+		}
+	} else if ( s_loadingBoostDepth > 0 && --s_loadingBoostDepth == 0 ) {
+		appletSetCpuBoostMode( ApmCpuBoostMode_Normal );
+	}
+}
+
+/*
 ============================================================================
 FILES AND PATHS
 ============================================================================
@@ -625,7 +648,10 @@ static void *Switch_EngineThread( void * ) {
 		args.Append( s_argv[i] );
 	}
 
+	Sys_SetLoadingBoost( true );
 	common->Init( args.Num(), args.Ptr(), NULL );
+	Sys_SetLoadingBoost( false );
+	Switch_ApplyDefaultBinds();
 
 	common->Printf( "%d MB System Memory\n", Sys_GetSystemRam() );
 	Switch_StartAsyncThread();

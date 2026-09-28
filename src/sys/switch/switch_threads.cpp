@@ -179,7 +179,14 @@ Same 16 ms tick as src/sys/linux/main.cpp Sys_AsyncThread.
 static xthreadInfo		asyncThread;
 static volatile bool	s_asyncThreadExit = false;
 
+// Applications may use cores 0-2 (core 3 belongs to the system). Every libnx
+// thread starts on the process's default core, which the engine thread uses, so
+// the async tick (sound mixing, network) moves to its own core.
+static const s32 ASYNC_THREAD_CORE = 1;
+
 static void Switch_AsyncThread( void ) {
+	svcSetThreadCoreMask( threadGetCurHandle(), ASYNC_THREAD_CORE, 1u << ASYNC_THREAD_CORE );
+
 	int now = Sys_Milliseconds();
 	int ticked = now >> 4;
 
