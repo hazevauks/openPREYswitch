@@ -14,7 +14,7 @@ distributed.
 | Engine sources (framework, renderer, sound, ui, ...) | Compile |
 | Platform layer `src/sys/switch/` | First version: files, time, threads, controller/touch input, EGL video. Networking is loopback only. |
 | GL loading (GLEW + generated GL 1.1 through `eglGetProcAddress`) | Done |
-| `OpenPrey.nro` | Links and packages; not yet run on hardware |
+| `OpenPrey.nro` | Boots on hardware, passes the intro cutscene and is playable. 10-15 fps at stock clocks, 30+ with the GPU at 921 MHz (before the post-processing defaults below). |
 | OpenGL capability probe (`tools/switch/gltest`) | Passed on hardware: GL 4.3 compatibility profile (Mesa 20.1 nouveau), ARB programs, legacy GLSL, S3TC. Only `GL_EXT_texture_lod` (optional) is missing. |
 
 ## Toolchain setup (Windows)
@@ -121,5 +121,7 @@ for example `bind JOY15 _attack`.
    `FindDLL` short-circuits the linked-in module on `__SWITCH__`).
 2. Audio: check which OpenAL Soft backend the devkitPro build uses.
 3. Default controller binds, and a software keyboard for the console.
-4. Performance on the Tegra X1 (docked resolution, post-processing defaults).
+4. Performance on the Tegra X1: profile with `com_showFPS 1`, try `r_screenFraction`
+   (render scale) and dynamic resolution. SSAO and bloom default to off on Switch
+   (`OPENPREY_POSTFX_DEFAULT` in `RenderSystem_init.cpp`).
 5. Multiplayer: real sockets in `switch_net.cpp`.

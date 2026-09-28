@@ -690,8 +690,12 @@ void idUsercmdGenLocal::JoystickMove( void ) {
 	}
 
 	if ( hasDedicatedLookAxis || !ButtonState( UB_STRAFE ) ) {
-		viewangles[YAW] += anglespeed * in_yawSpeed.GetFloat() * lookAxisX;
-		viewangles[PITCH] += anglespeed * in_pitchSpeed.GetFloat() * lookAxisY;
+		// Axes are -127..127: normalize so full tilt turns at in_yawspeed/in_pitchspeed
+		// degrees per second, like the _left/_right/_lookup/_lookdown buttons. Positive
+		// X is stick right, which turns right: yaw decreases, as for keys and the mouse.
+		const float axisScale = 1.0f / 127.0f;
+		viewangles[YAW] -= anglespeed * in_yawSpeed.GetFloat() * lookAxisX * axisScale;
+		viewangles[PITCH] += anglespeed * in_pitchSpeed.GetFloat() * lookAxisY * axisScale;
 	}
 
 	if ( hasDedicatedLookAxis ) {

@@ -57,12 +57,19 @@ idCVar r_glDriver( "r_glDriver", "", CVAR_RENDERER, "\"opengl32\", etc." );
 idCVar r_useLightPortalFlow( "r_useLightPortalFlow", "1", CVAR_RENDERER | CVAR_BOOL, "use a more precise area reference determination" );
 idCVar r_multiSamples( "r_multiSamples", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "number of antialiasing samples" );
 idCVar r_postAA( "r_postAA", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "post AA mode: 0 = off, 1 = SMAA 1x", 0, 1, idCmdSystem::ArgCompletion_Integer<0,1> );
-idCVar r_bloom( "r_bloom", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "enable bloom post-process" );
+// Post-processing defaults: SSAO (20 samples per pixel) and bloom are full-screen passes the
+// Switch GPU (Tegra X1) cannot afford at stock clocks; they stay available as options.
+#ifdef __SWITCH__
+#define OPENPREY_POSTFX_DEFAULT	"0"
+#else
+#define OPENPREY_POSTFX_DEFAULT	"1"
+#endif
+idCVar r_bloom( "r_bloom", OPENPREY_POSTFX_DEFAULT, CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "enable bloom post-process" );
 idCVar r_bloomThreshold( "r_bloomThreshold", "0.72", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "bloom bright-pass threshold", 0.0f, 2.0f );
 idCVar r_bloomSoftKnee( "r_bloomSoftKnee", "0.15", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "bloom soft threshold knee", 0.0f, 1.0f );
 idCVar r_bloomIntensity( "r_bloomIntensity", "0.45", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "bloom contribution scale", 0.0f, 4.0f );
 idCVar r_bloomRadius( "r_bloomRadius", "1.35", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "bloom sample radius scale", 0.1f, 8.0f );
-idCVar r_ssao( "r_ssao", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "enable screen-space ambient occlusion" );
+idCVar r_ssao( "r_ssao", OPENPREY_POSTFX_DEFAULT, CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "enable screen-space ambient occlusion" );
 idCVar r_ssaoRadius( "r_ssaoRadius", "36.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "SSAO sampling radius in view-space units", 4.0f, 256.0f );
 idCVar r_ssaoBias( "r_ssaoBias", "2.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "SSAO horizon bias in view-space units", 0.0f, 32.0f );
 idCVar r_ssaoIntensity( "r_ssaoIntensity", "1.35", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "SSAO darkening strength", 0.0f, 4.0f );

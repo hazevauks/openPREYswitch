@@ -550,7 +550,7 @@ typedef enum {
 
 typedef struct {
 	const char *	name;
-	int				threadHandle;
+	intptr_t			threadHandle;	// pointer-sized: pthread_t is a pointer on LP64 targets
 	unsigned long	threadId;
 } xthreadInfo;
 
