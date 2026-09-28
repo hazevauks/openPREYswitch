@@ -111,8 +111,12 @@ header of `src/sys/switch/switch_input.cpp`). The left stick moves, the right st
 looks, and **+** opens the menu. In menus, the left stick moves the cursor, **A**
 clicks, **B** goes back, and touching the screen clicks where you touch.
 
-Buttons have no default binds yet. Bind them from the console or `autoexec.cfg`,
-for example `bind JOY15 _attack`.
+Default binds (applied only to unbound keys, so rebinding is kept): ZR fire, ZL alt
+fire, B jump, A reload, Y spirit walk, X lighter, R/L and D-pad right/left
+next/previous weapon, L3 run, R3 zoom, D-pad up grenade, D-pad down crouch.
+
+**-** toggles the console. While it is down, **A** opens the system keyboard to type
+a command, D-pad up/down walks the history, L/R scroll, and **B** or **-** close it.
 
 ## Next steps
 
