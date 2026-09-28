@@ -224,3 +224,25 @@ void Switch_UpdateGyro( bool gameplay, bool aimHeld, bool handheld, unsigned int
 		Switch_QueueMouseDelta( dx, dy );
 	}
 }
+
+/*
+================
+Switch_ShutdownGyro
+
+Stops every six-axis sensor started by Switch_InitGyro. Leaving them running
+when the process ends crashed the system on "Closing software".
+================
+*/
+void Switch_ShutdownGyro( void ) {
+	if ( !s_initialized ) {
+		return;
+	}
+	for ( int i = 0; i < GYRO_NUM_SOURCES; i++ ) {
+		if ( s_started[i] ) {
+			hidStopSixAxisSensor( s_handles[i] );
+			s_started[i] = false;
+		}
+	}
+	s_activeSource = -1;
+	s_initialized = false;
+}

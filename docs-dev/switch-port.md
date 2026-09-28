@@ -174,6 +174,14 @@ x-right axis. `in_gyroDebug 1` prints raw values if a controller disagrees.
    `fs_cacheMissingDirs` skips lookups in search-path directories known to be
    missing (cleared on every write). Baseline before these changes: 72 s for
    game/roadhouse, 44 s of it loading 1206 images.
+   With them: 59 s; 13246 lookups skipped by the cache; 462 MB read from the SD
+   card in 23 s, almost all of it generated/ .bimage files. Those were
+   uncompressed RGBA8 (`DeriveOpts`: "no need to compress"). On Switch,
+   `image_compressTextures` (default 1) stores diffuse/default as DXT5 and
+   specular as DXT1 (2 also compresses normal maps). This cuts load size and
+   GPU memory bandwidth. The cache regenerates once, because it is keyed on the
+   format. `com_logHitches` (ms, default 100) logs slow frames with the file
+   work done in them.
 1. Performance on the Tegra X1. Hardware test at stock clocks: 22 fps at full
    resolution, 43 fps at half (fill-rate bound; shadows cost ~10%). Dynamic
    resolution is on by default on Switch: `r_dynamicResolution`,

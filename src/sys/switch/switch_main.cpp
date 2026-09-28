@@ -653,6 +653,36 @@ static const char *s_defaultArgs[] = {
 	"+set", "logFileName", "logs/openprey.log",
 };
 
+/*
+================
+Switch_ReportHitch
+
+Logs frames slower than com_logHitches ms with the file system work done in
+them, to tell stutters caused by SD card reads during play from GPU/CPU spikes
+(e.g. shader compiles). The file system counters run while fs_profileLoads is on.
+================
+*/
+static idCVar com_logHitches( "com_logHitches", "100", CVAR_SYSTEM | CVAR_INTEGER, "log frames slower than this many ms, with the file system work done in them (0 = off)", 0, 10000 );
+
+void FS_GetProfileTotals( int &opens, double &openSec, long long &readBytes, double &readSec );
+
+static void Switch_ReportHitch( int frameMsec, int opens0, double openSec0, long long bytes0, double readSec0 ) {
+	const int threshold = com_logHitches.GetInteger();
+	// map loads run inside one frame and report their own timings
+	if ( threshold <= 0 || frameMsec < threshold || frameMsec > 5000 ) {
+		return;
+	}
+	int opens1;
+	double openSec1, readSec1;
+	long long bytes1;
+	FS_GetProfileTotals( opens1, openSec1, bytes1, readSec1 );
+	common->Printf( "hitch: %d ms frame | files: %d opens (%.0f ms), %.2f MB read (%.0f ms) | 3D scale %d%%\n",
+		frameMsec,
+		opens1 - opens0, ( openSec1 - openSec0 ) * 1000.0,
+		( bytes1 - bytes0 ) / ( 1024.0 * 1024.0 ), ( readSec1 - readSec0 ) * 1000.0,
+		cvarSystem->GetCVarInteger( "r_renderScaleCurrent" ) );
+}
+
 static void *Switch_EngineThread( void * ) {
 	idList<const char *> args;
 	for ( size_t i = 0; i < sizeof( s_defaultArgs ) / sizeof( s_defaultArgs[0] ); i++ ) {
@@ -671,7 +701,15 @@ static void *Switch_EngineThread( void * ) {
 	Switch_StartAsyncThread();
 
 	while ( 1 ) {
+		int opens0;
+		double openSec0, readSec0;
+		long long bytes0;
+		FS_GetProfileTotals( opens0, openSec0, bytes0, readSec0 );
+		const int frameStart = Sys_Milliseconds();
+
 		common->Frame();
+
+		Switch_ReportHitch( Sys_Milliseconds() - frameStart, opens0, openSec0, bytes0, readSec0 );
 	}
 	return NULL;
 }
@@ -709,6 +747,9 @@ int main( int argc, char **argv ) {
 	// The engine thread ends through Sys_Quit/Sys_Error -> Switch_Exit; the
 	// process then leaves normally from here, on the main thread.
 	pthread_join( engineThread, NULL );
+
+	// the engine thread is gone: release hardware it left running
+	Switch_ShutdownGyro();
 
 	if ( s_nxlinkActive ) {
 		socketExit();

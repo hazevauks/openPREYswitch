@@ -1227,6 +1227,14 @@ void FS_ProfileRead( bool fromZip, int bytes, double startTime ) {
 	}
 }
 
+// running totals for per-frame hitch reports (sys/switch); updated while fs_profileLoads is on
+void FS_GetProfileTotals( int &opens, double &openSec, long long &readBytes, double &readSec ) {
+	opens = fsLoadStats.openOk + fsLoadStats.openFail;
+	openSec = fsLoadStats.openOkSec + fsLoadStats.openFailSec;
+	readBytes = fsLoadStats.osReadBytes + fsLoadStats.zipReadBytes;
+	readSec = fsLoadStats.osReadSec + fsLoadStats.zipReadSec;
+}
+
 static void FS_ClearDirCache( void ) {
 	Sys_EnterCriticalSection( CRITICAL_SECTION_THREE );
 	fsDirExists.Clear();

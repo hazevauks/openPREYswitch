@@ -466,6 +466,7 @@ void Sys_InitInput( void ) {
 
 void Sys_ShutdownInput( void ) {
 	s_inputInitialized = false;
+	Switch_ShutdownGyro();
 }
 
 void Sys_InitScanTable( void ) {
