@@ -371,6 +371,8 @@ if build_engine
       install: true,
       install_dir: install_root_dir,
     )
+  elif is_switch
+    # Built after subdir('basepy'), which produces the game object it links.
   else
     executable(
       engine_client_binary_name,
@@ -493,6 +495,58 @@ endif
 
 if build_engine or build_games
   subdir('basepy')
+endif
+
+if is_switch and build_engine
+  if not build_games
+    error('The Switch engine links the game statically: configure with -Dbuild_games=true.')
+  endif
+
+  # devkitPro Mesa has no libGL: generate the GL 1.1 entry points, resolved
+  # through eglGetProcAddress at GLimp_Init.
+  switch_gl11_loader = custom_target(
+    'switch_gl11_loader',
+    input: ['tools/switch/gen_gl11_loader.py', 'src/external/glew/glew.h'],
+    output: 'switch_gl11_loader.cpp',
+    command: [py, '@INPUT0@', '@INPUT1@', '@OUTPUT@'],
+  )
+
+  switch_engine_elf = executable(
+    engine_client_binary_name,
+    engine_sources + [switch_gl11_loader, switch_game_object],
+    include_directories: engine_include_dirs + [include_directories('src/sys/switch')],
+    dependencies: deps,
+    cpp_args: engine_cpp_args,
+    c_args: engine_c_args,
+    cpp_pch: pch_headers,
+    link_args: engine_link_args + ['-Wl,-Map,' + engine_client_binary_name + '.map'],
+    name_suffix: 'elf',
+    install: false,
+  )
+
+  # Homebrew package: metadata (.nacp) + executable -> .nro
+  dkp_tools_dir = '/opt/devkitpro/tools/bin'
+  nacptool = find_program('nacptool', dirs: [dkp_tools_dir], required: true)
+  elf2nro = find_program('elf2nro', dirs: [dkp_tools_dir], required: true)
+
+  switch_nacp = custom_target(
+    'switch_nacp',
+    output: 'OpenPrey.nacp',
+    command: [nacptool, '--create', 'OpenPrey', 'OpenPrey Switch port', meson.project_version(), '@OUTPUT@'],
+  )
+
+  custom_target(
+    'switch_nro',
+    input: switch_engine_elf,
+    output: 'OpenPrey.nro',
+    command: [
+      elf2nro, '@INPUT@', '@OUTPUT@',
+      '--nacp=' + switch_nacp.full_path(),
+      '--icon=' + '/opt/devkitpro/libnx/default_icon.jpg',
+    ],
+    depends: switch_nacp,
+    build_by_default: true,
+  )
 endif
 
 install_data(

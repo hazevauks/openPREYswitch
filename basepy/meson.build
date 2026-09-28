@@ -27,6 +27,23 @@ if build_games
       cpp_pch: game_module_pch_headers,
       install: false,
     )
+
+    # One relocatable object exporting only GetGameAPI, so the game keeps the
+    # private globals and idlib copy it has as a DLL on desktop platforms.
+    switch_game_object = custom_target(
+      'switch_game_object',
+      input: [game_static_library, game_idlib_library],
+      output: game_binary_name + '.o',
+      command: [
+        py,
+        meson.project_source_root() / 'tools' / 'switch' / 'make_game_object.py',
+        '@OUTPUT@',
+        find_program('objcopy', required: true),
+        meson.get_compiler('cpp').cmd_array(),
+        '--',
+        '@INPUT@',
+      ],
+    )
   else
     shared_module(
       game_binary_name,
