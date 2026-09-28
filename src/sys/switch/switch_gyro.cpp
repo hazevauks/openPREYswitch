@@ -19,7 +19,8 @@ flat. Pitch is the rotation around the controller's right axis.
 
 Six-axis units (libnx HidSixAxisSensorState): angular velocity in rotations per
 second (1.0 = 360 deg/s), acceleration in G. Device axes are assumed to be
-x = right, y = up, z = toward the player; in_gyroInvertX / in_gyroInvertY flip
+x = right, y = up, z = toward the player (yaw sign confirmed on hardware);
+in_gyroInvertX / in_gyroInvertY flip
 the result if a controller reports them otherwise, and in_gyroDebug 1 prints
 raw values once per second to check.
 
@@ -179,7 +180,9 @@ void Switch_UpdateGyro( bool gameplay, bool aimHeld, bool handheld, unsigned int
 	const idVec3 omegaDeg = omega * 360.0f;		// rotations/s -> degrees/s
 
 	// player space: yaw around world up; pitch around the controller's right axis
-	float yawRate = omegaDeg * s_up;		// + = counter-clockwise from above = turn left
+	// + = turn left. The HID six-axis frame is left-handed for this projection:
+	// hardware test showed yaw reversed with ( omega . up ), so it is negated here.
+	float yawRate = -( omegaDeg * s_up );
 	float pitchRate = omegaDeg.x;			// + = top edge toward the player = aim up
 
 	const float deadZone = in_gyroDeadZone.GetFloat();

@@ -162,8 +162,8 @@ are supported.
 | `in_gyroInvertX` / `Y` | 0 | flip an axis |
 | `in_gyroDebug` | 0 | print raw sensor values once per second |
 
-The device axis convention (x right, y up, z toward the player) is assumed; the
-first hardware test should confirm it with `in_gyroDebug 1`.
+The yaw direction is confirmed on hardware (handheld); pitch follows the assumed
+x-right axis. `in_gyroDebug 1` prints raw values if a controller disagrees.
 
 ## Next steps
 
