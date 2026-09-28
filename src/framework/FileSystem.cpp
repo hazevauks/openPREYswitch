@@ -36,6 +36,8 @@ If you have questions concerning this license or the applicable additional terms
 	#include <io.h>	// for _read
 	#include <direct.h> // for _getcwd
 	#include <ctype.h>
+	#include <sys/types.h>
+	#include <sys/stat.h>	// stat() for the directory cache
 #else
 	#if !__MACH__ && __MWERKS__
 		#include <types.h>
@@ -1060,7 +1062,10 @@ idCVar	idFileSystemLocal::fs_savepath( "fs_savepath", "", CVAR_SYSTEM | CVAR_INI
 idCVar	idFileSystemLocal::fs_cdpath( "fs_cdpath", "", CVAR_SYSTEM | CVAR_INIT, "" );
 idCVar	idFileSystemLocal::fs_game( "fs_game", OPENPREY_GAMEDIR, CVAR_SYSTEM | CVAR_INIT | CVAR_SERVERINFO, "mod path" );
 idCVar  idFileSystemLocal::fs_game_base( "fs_game_base", "", CVAR_SYSTEM | CVAR_INIT | CVAR_SERVERINFO, "alternate mod path, searched after the main fs_game path, before the basedir" );
-#ifdef WIN32
+// The Switch SD card (FAT32/exFAT) is case insensitive. With 1, every failed open
+// also lists the whole directory looking for a case variant, a slow SD round trip
+// repeated for each file that lives in a pk4.
+#if defined( WIN32 ) || defined( __SWITCH__ )
 idCVar	idFileSystemLocal::fs_caseSensitiveOS( "fs_caseSensitiveOS", "0", CVAR_SYSTEM | CVAR_BOOL, "" );
 #else
 idCVar	idFileSystemLocal::fs_caseSensitiveOS( "fs_caseSensitiveOS", "1", CVAR_SYSTEM | CVAR_BOOL, "" );
@@ -1156,6 +1161,111 @@ bool idFileSystemLocal::FilenameCompare( const char *s1, const char *s2 ) const 
 }
 
 /*
+===============================================================================
+
+Load profiling and the directory cache
+
+Every lookup tries each search-path directory on disk before the pk4s, and
+most of those tries fail because the file lives in a pk4. On the Switch SD
+card each failed try is a slow file system round trip, repeated for
+thousands of files per map.
+
+fs_cacheMissingDirs remembers, per directory, whether it exists: lookups in a
+directory known to be missing skip the OS, and existing directories skip the
+follow-up check. The cache is cleared whenever the file system writes a file
+or creates directories, so it never hides a new file.
+
+fs_profileLoads prints where file system time went after each map load
+(fsLoadStats).
+
+===============================================================================
+*/
+
+#ifdef __SWITCH__
+#define FS_SWITCH_ONLY_DEFAULT	"1"
+#else
+#define FS_SWITCH_ONLY_DEFAULT	"0"
+#endif
+
+idCVar fs_profileLoads( "fs_profileLoads", FS_SWITCH_ONLY_DEFAULT, CVAR_SYSTEM | CVAR_BOOL, "print file system timings after each map load (see fsLoadStats)" );
+idCVar fs_cacheMissingDirs( "fs_cacheMissingDirs", FS_SWITCH_ONLY_DEFAULT, CVAR_SYSTEM | CVAR_BOOL, "cache which search-path directories exist so lookups skip missing ones; cleared on every write" );
+
+typedef struct {
+	int			openOk;
+	int			openFail;
+	int			openSkipped;		// answered by the directory cache
+	double		openOkSec;
+	double		openFailSec;
+	long long	osReadBytes;
+	long long	zipReadBytes;
+	double		osReadSec;
+	double		zipReadSec;
+} fsLoadStats_t;
+
+static fsLoadStats_t	fsLoadStats;
+static idHashTable<bool> fsDirExists;		// directory OS path -> exists
+
+double FS_ProfileTime( void ) {
+	if ( !fs_profileLoads.GetBool() ) {
+		return 0.0;
+	}
+	return Sys_GetClockTicks() / Sys_ClockTicksPerSecond();
+}
+
+// called by idFile_Permanent::Read and idFile_InZip::Read (File.cpp)
+void FS_ProfileRead( bool fromZip, int bytes, double startTime ) {
+	if ( !fs_profileLoads.GetBool() || startTime == 0.0 || bytes <= 0 ) {
+		return;
+	}
+	const double elapsed = FS_ProfileTime() - startTime;
+	if ( fromZip ) {
+		fsLoadStats.zipReadBytes += bytes;
+		fsLoadStats.zipReadSec += elapsed;
+	} else {
+		fsLoadStats.osReadBytes += bytes;
+		fsLoadStats.osReadSec += elapsed;
+	}
+}
+
+static void FS_ClearDirCache( void ) {
+	Sys_EnterCriticalSection( CRITICAL_SECTION_THREE );
+	fsDirExists.Clear();
+	Sys_LeaveCriticalSection( CRITICAL_SECTION_THREE );
+}
+
+// returns 1 = exists, 0 = missing, -1 = unknown
+static int FS_LookupDirCache( const char *dir ) {
+	bool *exists = NULL;
+	int result = -1;
+	Sys_EnterCriticalSection( CRITICAL_SECTION_THREE );
+	if ( fsDirExists.Get( dir, &exists ) && exists ) {
+		result = *exists ? 1 : 0;
+	}
+	Sys_LeaveCriticalSection( CRITICAL_SECTION_THREE );
+	return result;
+}
+
+static void FS_StoreDirCache( const char *dir, bool exists ) {
+	Sys_EnterCriticalSection( CRITICAL_SECTION_THREE );
+	fsDirExists.Set( dir, exists );
+	Sys_LeaveCriticalSection( CRITICAL_SECTION_THREE );
+}
+
+static void FS_LoadStats_f( const idCmdArgs &args ) {
+	if ( args.Argc() > 1 && !idStr::Icmp( args.Argv( 1 ), "reset" ) ) {
+		memset( &fsLoadStats, 0, sizeof( fsLoadStats ) );
+		return;
+	}
+	const fsLoadStats_t &s = fsLoadStats;
+	common->Printf( "----- file system load stats -----\n" );
+	common->Printf( "OS opens: %d ok (%.1f s), %d failed (%.1f s), %d skipped by the directory cache\n",
+		s.openOk, s.openOkSec, s.openFail, s.openFailSec, s.openSkipped );
+	common->Printf( "OS reads: %.1f MB in %.1f s\n", s.osReadBytes / ( 1024.0 * 1024.0 ), s.osReadSec );
+	common->Printf( "pk4 reads (incl. inflate): %.1f MB in %.1f s\n", s.zipReadBytes / ( 1024.0 * 1024.0 ), s.zipReadSec );
+	common->Printf( "----------------------------------\n" );
+}
+
+/*
 ================
 idFileSystemLocal::OpenOSFile
 optional caseSensitiveName is set to case sensitive file name as found on disc (fs_caseSensitiveOS only)
@@ -1167,9 +1277,29 @@ FILE *idFileSystemLocal::OpenOSFile( const char *fileName, const char *mode, idS
 	idStr fpath, entry;
 	idStrList list;
 
+	const bool readOnly = ( mode[0] == 'r' ) && ( strchr( mode, '+' ) == NULL );
+	if ( !readOnly ) {
+		// a write may create the file (and CreateOSPath its directories)
+		FS_ClearDirCache();
+	}
+
+	idStr dirPath;
+	const bool useDirCache = readOnly && fs_cacheMissingDirs.GetBool();
+	if ( useDirCache ) {
+		dirPath = fileName;
+		dirPath.StripFilename();
+		if ( FS_LookupDirCache( dirPath ) == 0 ) {
+			fsLoadStats.openSkipped++;
+			return NULL;
+		}
+	}
+
+	const double openStart = FS_ProfileTime();
+
 #ifndef __MWERKS__
-#ifndef WIN32 
+#if !defined( WIN32 ) && !defined( __SWITCH__ )
 	// some systems will let you fopen a directory
+	// (not the Switch: fopen of a directory fails there, and each stat is an SD card round trip)
 	struct stat buf;
 	if ( stat( fileName, &buf ) != -1 && !S_ISREG(buf.st_mode) ) {
 		return NULL;
@@ -1177,6 +1307,27 @@ FILE *idFileSystemLocal::OpenOSFile( const char *fileName, const char *mode, idS
 #endif
 #endif
 	fp = fopen( fileName, mode );
+
+	if ( openStart != 0.0 ) {
+		const double elapsed = FS_ProfileTime() - openStart;
+		if ( fp ) {
+			fsLoadStats.openOk++;
+			fsLoadStats.openOkSec += elapsed;
+		} else {
+			fsLoadStats.openFail++;
+			fsLoadStats.openFailSec += elapsed;
+		}
+	}
+
+	if ( useDirCache && dirPath.Length() && FS_LookupDirCache( dirPath ) == -1 ) {
+		bool dirExists = ( fp != NULL );
+		if ( !dirExists ) {
+			struct stat dirBuf;
+			dirExists = ( stat( dirPath, &dirBuf ) == 0 );
+		}
+		FS_StoreDirCache( dirPath, dirExists );
+	}
+
 	if ( !fp && fs_caseSensitiveOS.GetBool() ) {
 		fpath = fileName;
 		fpath.StripFilename();
@@ -1261,6 +1412,9 @@ void idFileSystemLocal::CreateOSPath( const char *OSPath ) {
 #endif
 		return;
 	}
+
+	// new directories invalidate the directory cache
+	FS_ClearDirCache();
 
 	idStr path( OSPath );
 	for( ofs = &path[ 1 ]; *ofs ; ofs++ ) {
@@ -3098,6 +3252,7 @@ void idFileSystemLocal::Startup( void ) {
 	cmdSystem->AddCommand( "dir", Dir_f, CMD_FL_SYSTEM, "lists a folder", idCmdSystem::ArgCompletion_FileName );
 	cmdSystem->AddCommand( "dirtree", DirTree_f, CMD_FL_SYSTEM, "lists a folder with subfolders" );
 	cmdSystem->AddCommand( "path", Path_f, CMD_FL_SYSTEM, "lists search paths" );
+	cmdSystem->AddCommand( "fsLoadStats", FS_LoadStats_f, CMD_FL_SYSTEM, "prints file system load timings (fs_profileLoads); \"fsLoadStats reset\" clears them" );
 	cmdSystem->AddCommand( "touchFile", TouchFile_f, CMD_FL_SYSTEM, "touches a file" );
 	cmdSystem->AddCommand( "touchFileList", TouchFileList_f, CMD_FL_SYSTEM, "touches a list of files" );
 

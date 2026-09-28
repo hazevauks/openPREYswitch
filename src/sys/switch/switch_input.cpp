@@ -439,6 +439,11 @@ void Switch_PollInput( void ) {
 	}
 
 	Switch_UpdateTouch( s_inputMode == INPUT_MODE_MENU ? gui : NULL );
+
+	// gyro aiming, only while playing (ZL is the aim button for in_gyro 2)
+	const u64 held = padGetButtons( &s_pad );
+	Switch_UpdateGyro( s_inputMode == INPUT_MODE_GAME, ( held & HidNpadButton_ZL ) != 0,
+		padIsHandheld( &s_pad ), padGetStyleSet( &s_pad ) );
 }
 
 /*
@@ -450,6 +455,7 @@ void Sys_InitInput( void ) {
 	padConfigureInput( 1, HidNpadStyleSet_NpadStandard );
 	padInitializeDefault( &s_pad );
 	hidInitializeTouchScreen();
+	Switch_InitGyro();
 	memset( s_pressedAs, 0, sizeof( s_pressedAs ) );
 	memset( s_joystickAxisState, 0, sizeof( s_joystickAxisState ) );
 	s_buttonsDown = 0;
@@ -512,17 +518,64 @@ void Sys_EndKeyboardInputEvents( void ) {
 
 /*
 ================
-mouse (menu cursor moves go through SE_MOUSE events instead)
+mouse
+
+Only gyro aiming produces mouse deltas (Switch_QueueMouseDelta); menu cursor
+moves go through SE_MOUSE events instead.
 ================
 */
+typedef struct {
+	int		action;
+	int		value;
+} switchMouseEvent_t;
+
+static switchMouseEvent_t	s_mouseQueue[INPUT_QUEUE_SIZE];
+static int					s_mouseHead = 0;
+static int					s_mouseTail = 0;
+static switchMouseEvent_t	s_polledMouse[INPUT_QUEUE_SIZE];
+static int					s_polledMouseCount = 0;
+
+static void Switch_QueueMouseInput( int action, int value ) {
+	const int next = ( s_mouseHead + 1 ) & INPUT_QUEUE_MASK;
+	if ( next == s_mouseTail ) {
+		s_mouseTail = ( s_mouseTail + 1 ) & INPUT_QUEUE_MASK;
+	}
+	s_mouseQueue[s_mouseHead].action = action;
+	s_mouseQueue[s_mouseHead].value = value;
+	s_mouseHead = next;
+}
+
+void Switch_QueueMouseDelta( int dx, int dy ) {
+	Sys_EnterCriticalSection( CRITICAL_SECTION_ONE );
+	if ( dx ) {
+		Switch_QueueMouseInput( M_DELTAX, dx );
+	}
+	if ( dy ) {
+		Switch_QueueMouseInput( M_DELTAY, dy );
+	}
+	Sys_LeaveCriticalSection( CRITICAL_SECTION_ONE );
+}
+
 int Sys_PollMouseInputEvents( void ) {
-	return 0;
+	Sys_EnterCriticalSection( CRITICAL_SECTION_ONE );
+	s_polledMouseCount = 0;
+	while ( s_mouseTail != s_mouseHead && s_polledMouseCount < INPUT_QUEUE_SIZE ) {
+		s_polledMouse[s_polledMouseCount++] = s_mouseQueue[s_mouseTail];
+		s_mouseTail = ( s_mouseTail + 1 ) & INPUT_QUEUE_MASK;
+	}
+	Sys_LeaveCriticalSection( CRITICAL_SECTION_ONE );
+	return s_polledMouseCount;
 }
 
 int Sys_ReturnMouseInputEvent( const int n, int &action, int &value ) {
-	action = 0;
-	value = 0;
-	return 0;
+	if ( n < 0 || n >= s_polledMouseCount ) {
+		action = 0;
+		value = 0;
+		return 0;
+	}
+	action = s_polledMouse[n].action;
+	value = s_polledMouse[n].value;
+	return 1;
 }
 
 void Sys_EndMouseInputEvents( void ) {

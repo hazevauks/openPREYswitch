@@ -2120,6 +2120,10 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 #ifdef __SWITCH__
 	idSwitchLoadingBoostGuard loadingBoost;
 #endif
+	const bool profileLoad = cvarSystem->GetCVarBool( "fs_profileLoads" );
+	if ( profileLoad ) {
+		cmdSystem->BufferCommandText( CMD_EXEC_NOW, "fsLoadStats reset\n" );
+	}
 	int		i;
 	bool	reloadingSameMap;
 	const bool playLevelLoadMusic =
@@ -2310,6 +2314,9 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 
 	int	msec = Sys_Milliseconds() - start;
 	common->Printf( "%6d msec to load %s\n", msec, mapString.c_str() );
+	if ( profileLoad ) {
+		cmdSystem->BufferCommandText( CMD_EXEC_NOW, "fsLoadStats\n" );
+	}
 
 	// let the game trigger interaction generation after the first game frame
 	// so lights and entities have presented to the render world.

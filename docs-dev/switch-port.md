@@ -146,8 +146,34 @@ default move to the new one.
 **-** toggles the console. While it is down, **A** opens the system keyboard to type
 a command, D-pad up/down walks the history, L/R scroll, and **B** or **-** close it.
 
+### Gyro aiming
+
+`src/sys/switch/switch_gyro.cpp` adds motion aiming on top of the right stick, fed
+through the mouse path so it applies exact angles. Yaw is measured around the
+world vertical (from gravity), so it works with the console upright or a Pro
+Controller lying flat. Handheld, Pro Controller and dual Joy-Cons (right one aims)
+are supported.
+
+| cvar | default | meaning |
+|---|---|---|
+| `in_gyro` | 1 | 0 off, 1 always, 2 only while ZL (aim) is held |
+| `in_gyroSensitivityX` / `Y` | 2.0 | camera degrees per degree the controller turns |
+| `in_gyroDeadZone` | 1.0 | ignore rotation slower than this (deg/s) |
+| `in_gyroInvertX` / `Y` | 0 | flip an axis |
+| `in_gyroDebug` | 0 | print raw sensor values once per second |
+
+The device axis convention (x right, y up, z toward the player) is assumed; the
+first hardware test should confirm it with `in_gyroDebug 1`.
+
 ## Next steps
 
+0. Map load time: `fs_profileLoads` (on by default on Switch) prints file system
+   timings after each load (`fsLoadStats`). On Switch, `fs_caseSensitiveOS`
+   defaults to 0 (the SD card is case insensitive; with 1 every failed open also
+   listed the directory), the extra `stat()` per open is skipped, and
+   `fs_cacheMissingDirs` skips lookups in search-path directories known to be
+   missing (cleared on every write). Baseline before these changes: 72 s for
+   game/roadhouse, 44 s of it loading 1206 images.
 1. Performance on the Tegra X1. Hardware test at stock clocks: 22 fps at full
    resolution, 43 fps at half (fill-rate bound; shadows cost ~10%). Dynamic
    resolution is on by default on Switch: `r_dynamicResolution`,

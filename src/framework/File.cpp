@@ -1059,6 +1059,20 @@ idFile_Permanent::~idFile_Permanent( void ) {
 	}
 }
 
+// load profiling (fs_profileLoads, FileSystem.cpp): times one Read call; bytes are the requested length
+double	FS_ProfileTime( void );
+void	FS_ProfileRead( bool fromZip, int bytes, double startTime );
+
+class idFileReadProfile {
+public:
+				idFileReadProfile( bool fromZip, int bytes ) : fromZip( fromZip ), bytes( bytes ), start( FS_ProfileTime() ) {}
+				~idFileReadProfile() { FS_ProfileRead( fromZip, bytes, start ); }
+private:
+	bool		fromZip;
+	int			bytes;
+	double		start;
+};
+
 /*
 =================
 idFile_Permanent::Read
@@ -1067,6 +1081,7 @@ Properly handles partial reads
 =================
 */
 int idFile_Permanent::Read( void *buffer, int len ) {
+	idFileReadProfile readProfile( false, len );
 	int		block, remaining;
 	int		read;
 	byte *	buf;
@@ -1283,6 +1298,7 @@ Properly handles partial reads
 =================
 */
 int idFile_InZip::Read( void *buffer, int len ) {
+	idFileReadProfile readProfile( true, len );
 	static const int readChunkBytes = 64 * 1024;
 	byte *buf = static_cast<byte *>( buffer );
 	int totalRead = 0;
