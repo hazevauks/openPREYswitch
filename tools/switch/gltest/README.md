@@ -28,8 +28,8 @@ build, so the probe always tests the current shaders.
 1. Copy `openprey_gltest.nro` to `sdmc:/switch/` on the SD card.
 2. Start the Homebrew Menu by holding **R** while launching a game (title
    override), not from the Album.
-3. Run **OpenPrey GL Test**. The screen flashes blue for about 1.5 seconds, then
-   the report appears. Press **+** to exit.
+3. Run **OpenPrey GL Test**. When the tests finish, the screen turns **green**
+   (no `[FAIL]`, report saved) or **red**. Press **+** to exit.
 
 The same report is saved to `sdmc:/openprey_gltest.txt`.
 

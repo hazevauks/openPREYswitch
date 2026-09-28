@@ -7,7 +7,7 @@ Answers one question before the real port starts: does the Switch Mesa
 
   - an OpenGL *compatibility* profile context with an 8-bit stencil buffer
   - immediate mode / fixed function (glBegin, glMatrixMode, ...)
-  - ARB assembly programs (the real basepy/glprogs/*.vfp files)
+  - ARB assembly programs (the real .vfp files in basepy/glprogs)
   - legacy GLSL (ftransform/gl_TexCoord) for the post-processing shaders
   - S3TC (DXT) compressed textures and the extensions the renderer checks
 
@@ -512,19 +512,19 @@ static void TestTexturesAndBuffers( void ) {
 	Check( CHECK_REQUIRED, err == GL_NO_ERROR, "vertex buffer object", detail );
 }
 
-static void RunTests( void ) {
+/* Returns 1 when a GL context with loaded entry points is left current for the result screen. */
+static int RunTests( void ) {
 	const char *contextKind = InitEGL();
 	Check( CHECK_REQUIRED, contextKind != NULL, "create EGL OpenGL context with 8-bit stencil",
 		contextKind ? contextKind : "eglCreateContext failed" );
 	if ( !contextKind ) {
-		return;
+		return 0;
 	}
 
 	int missing = LoadGLFunctions();
 	Check( CHECK_REQUIRED, missing == 0, "load GL entry points via eglGetProcAddress", "" );
 	if ( missing ) {
-		DeinitEGL();
-		return;
+		return 0;
 	}
 
 	GLint profileMask = 0, stencilBits = 0, maxTexSize = 0;
@@ -552,11 +552,7 @@ static void RunTests( void ) {
 	TestGLSLPair( "romfs:/glprogs/openprey_bloom.vs", "romfs:/glprogs/openprey_bloom.fs", "GLSL openprey_bloom" );
 	TestTexturesAndBuffers();
 
-	/* Show the last frame briefly so a working GL stack is visible on screen too. */
-	eglSwapBuffers( s_display, s_surface );
-	svcSleepThread( 1500000000ULL );
-
-	DeinitEGL();
+	return 1;
 }
 
 /*
@@ -575,7 +571,7 @@ int main( int argc, char **argv ) {
 	Result rc = romfsInit();
 	Check( CHECK_REQUIRED, R_SUCCEEDED( rc ), "mount RomFS", "" );
 
-	RunTests();
+	int glReady = RunTests();
 
 	Rep( "------------------------\n" );
 	Rep( "PASS %d  WARN %d  FAIL %d\n", g_pass, g_warn, g_fail );
@@ -592,15 +588,37 @@ int main( int argc, char **argv ) {
 		romfsExit();
 	}
 
-	/* EGL is gone now; the text console can take over the framebuffer. */
+	padConfigureInput( 1, HidNpadStyleSet_NpadStandard );
+	PadState pad;
+	padInitializeDefault( &pad );
+
+	if ( glReady ) {
+		/*
+		Result screen drawn with GL: green = no FAIL, red = FAIL (details in the
+		report file). Switching the same window over to the libnx text console
+		after tearing EGL down crashed on hardware, so GL keeps the screen until
+		exit, the same way the official devkitPro GL examples do.
+		*/
+		const int ok = ( g_fail == 0 ) && saved;
+		while ( appletMainLoop() ) {
+			padUpdate( &pad );
+			if ( padGetButtonsDown( &pad ) & HidNpadButton_Plus ) {
+				break;
+			}
+			qglClearColor( ok ? 0.0f : 0.8f, ok ? 0.6f : 0.0f, 0.0f, 1.0f );
+			qglClear( GL_COLOR_BUFFER_BIT );
+			eglSwapBuffers( s_display, s_surface );
+		}
+		DeinitEGL();
+		return 0;
+	}
+
+	/* No usable GL: EGL never drew to the window, so the text console is safe here. */
+	DeinitEGL();
 	consoleInit( NULL );
 	printf( "%s", g_report );
 	printf( "\nReport %s %s\n", saved ? "saved to" : "could NOT be saved to", REPORT_PATH );
 	printf( "Press + to exit.\n" );
-
-	padConfigureInput( 1, HidNpadStyleSet_NpadStandard );
-	PadState pad;
-	padInitializeDefault( &pad );
 	while ( appletMainLoop() ) {
 		padUpdate( &pad );
 		if ( padGetButtonsDown( &pad ) & HidNpadButton_Plus ) {

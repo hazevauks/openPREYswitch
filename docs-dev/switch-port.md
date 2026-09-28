@@ -14,7 +14,7 @@ distributed.
 | Engine sources (framework, renderer, sound, ui, ...) | Compile |
 | Platform layer `src/sys/switch/` | Not started. The engine does not link yet. |
 | GL loading (qgl/GLEW through `eglGetProcAddress`) | Not started |
-| OpenGL capability probe (`tools/switch/gltest`) | Builds; needs a run on hardware |
+| OpenGL capability probe (`tools/switch/gltest`) | Passed on hardware: GL 4.3 compatibility profile (Mesa 20.1 nouveau), ARB programs, legacy GLSL, S3TC. Only `GL_EXT_texture_lod` (optional) is missing. |
 
 ## Toolchain setup (Windows)
 
@@ -64,9 +64,7 @@ Useful partial targets while the port is incomplete:
 
 ## Next steps
 
-1. Run `tools/switch/gltest` on hardware to confirm that a compatibility-profile
-   context, ARB programs, and S3TC work on Switch Mesa.
-2. `src/sys/switch/`: `main`, time, files, paths, threads, and events (SDL2).
-3. GL loader: resolve `gl*`/GLEW entry points through `eglGetProcAddress`.
-4. `GLimp_*` on SDL2 + EGL, controller input, and audio.
-5. Package an `.nro` (`nacptool`/`elf2nro`) from the linked ELF.
+1. `src/sys/switch/`: `main`, time, files, paths, threads, and events (SDL2).
+2. GL loader: resolve `gl*`/GLEW entry points through `eglGetProcAddress`.
+3. `GLimp_*` on SDL2 + EGL, controller input, and audio.
+4. Package an `.nro` (`nacptool`/`elf2nro`) from the linked ELF.
