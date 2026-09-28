@@ -80,6 +80,14 @@ MSYSTEM=MSYS /c/Users/Usuario/Downloads/devkitPro/msys2/usr/bin/bash.exe -lc "cd
   - `openprey_crash.txt`: exceção de CPU (PC, LR, backtrace).
   - Relatórios do Atmosphère (`atmosphere/crash_reports/`), quando o sistema
     mostra uma tela de erro.
+- **O motor grava em `basepr/`** (é o primeiro diretório de busca):
+  - `OpenPreyConfig.cfg`: configurações e binds. Apagar volta tudo ao padrão.
+  - `generated/images/*.bimage`: cache das texturas já comprimidas em DXT.
+    Apagar faz o próximo carregamento de cada mapa recomprimir todas as imagens
+    na CPU, o que leva vários minutos e parece um travamento. No log aparecem
+    linhas `Writing generated/images/...`. Só é preciso apagar se mudar
+    `image_compressTextures`.
+  - Saves e logs.
 - Ler um crash:
   `aarch64-none-elf-addr2line -f -C -e .tmp/elf-builds/OpenPrey-<commit>.elf <offsets>`
 - **Console do jogo:** o botão **−** abre e fecha; **A** abre o teclado do sistema.
