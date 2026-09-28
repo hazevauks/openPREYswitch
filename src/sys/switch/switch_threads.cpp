@@ -241,3 +241,74 @@ void Switch_InitThreads( void ) {
 	}
 	memset( &asyncThread, 0, sizeof( asyncThread ) );
 }
+
+/*
+=========================================================
+Core placement for every thread (pthread_create is wrapped)
+
+libnx starts each new thread on the process's default core (core 0), which is
+also where the engine thread runs. Library threads (the OpenAL Soft mixer with
+EFX reverb, the file system background thread, any Mesa worker) all landed on
+core 0 as well: hardware test showed core 0 at 90-97% while cores 1 and 2
+stayed under 10%.
+
+The link wraps pthread_create (-Wl,--wrap=pthread_create, meson.build) so every
+thread, including those created inside static libraries, starts through a
+trampoline that moves it to its core first:
+	core 0	engine thread (Switch_SetNextThreadCore( 0 ) in main)
+	core 1	async tick (switch_threads.cpp moves itself there)
+	core 2	everything else (SWITCH_LIBRARY_THREAD_CORE)
+Applications may use cores 0-2; core 3 belongs to the system.
+=========================================================
+*/
+
+static const int	SWITCH_LIBRARY_THREAD_CORE = 2;
+static volatile int	s_nextThreadCore = -1;		// one-shot override, consumed by the next pthread_create
+static volatile int	s_threadsPlaced = 0;
+
+typedef struct {
+	void *	( *start )( void * );
+	void *	arg;
+	int		core;
+} switchThreadTrampoline_t;
+
+extern "C" int __real_pthread_create( pthread_t *thread, const pthread_attr_t *attr, void *( *start )( void * ), void *arg );
+
+static void *Switch_ThreadTrampoline( void *param ) {
+	const switchThreadTrampoline_t t = *(switchThreadTrampoline_t *)param;
+	free( param );
+	if ( t.core >= 0 ) {
+		svcSetThreadCoreMask( threadGetCurHandle(), t.core, 1u << t.core );
+	}
+	return t.start( t.arg );
+}
+
+extern "C" int __wrap_pthread_create( pthread_t *thread, const pthread_attr_t *attr, void *( *start )( void * ), void *arg ) {
+	int core = __atomic_exchange_n( &s_nextThreadCore, -1, __ATOMIC_SEQ_CST );
+	if ( core < 0 ) {
+		core = SWITCH_LIBRARY_THREAD_CORE;
+	}
+
+	switchThreadTrampoline_t *t = (switchThreadTrampoline_t *)malloc( sizeof( *t ) );
+	if ( !t ) {
+		return __real_pthread_create( thread, attr, start, arg );
+	}
+	t->start = start;
+	t->arg = arg;
+	t->core = core;
+	const int result = __real_pthread_create( thread, attr, Switch_ThreadTrampoline, t );
+	if ( result != 0 ) {
+		free( t );
+	} else {
+		__atomic_add_fetch( &s_threadsPlaced, 1, __ATOMIC_SEQ_CST );
+	}
+	return result;
+}
+
+void Switch_SetNextThreadCore( int core ) {
+	__atomic_store_n( &s_nextThreadCore, core, __ATOMIC_SEQ_CST );
+}
+
+int Switch_ThreadsCreated( void ) {
+	return s_threadsPlaced;
+}

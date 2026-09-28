@@ -34,6 +34,36 @@ idRenderSystemLocal	tr;
 idRenderSystem	*renderSystem = &tr;
 
 /*
+=====================
+R_PerfTime / R_AddPerfTime / R_TakePerfTimes
+
+tr.pc.frontEndMsec and backEnd.pc.msec use whole milliseconds and are reset by
+R_PerformanceCounters, so platform performance logs (com_logPerf on Switch)
+use these clock-tick accumulators instead.
+=====================
+*/
+static double	perfFrontEndSec = 0.0;
+static double	perfBackEndSec = 0.0;
+
+double R_PerfTime( void ) {
+	return Sys_GetClockTicks() / Sys_ClockTicksPerSecond();
+}
+
+void R_AddPerfTime( bool backEndTime, double seconds ) {
+	if ( backEndTime ) {
+		perfBackEndSec += seconds;
+	} else {
+		perfFrontEndSec += seconds;
+	}
+}
+
+void R_TakePerfTimes( double &frontEndSec, double &backEndSec ) {
+	frontEndSec = perfFrontEndSec;
+	backEndSec = perfBackEndSec;
+	perfFrontEndSec = perfBackEndSec = 0.0;
+}
+
+/*
 =====================================================================================
 
 Render scale / dynamic resolution

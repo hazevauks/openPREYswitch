@@ -666,6 +666,7 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 	}
 
 	backEndStartTime = Sys_Milliseconds();
+	const double perfStart = R_PerfTime();
 
 	// needed for editor rendering
 	RB_SetDefaultGLState();
@@ -724,6 +725,7 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 	// stop rendering on this thread
 	backEndFinishTime = Sys_Milliseconds();
 	backEnd.pc.msec = backEndFinishTime - backEndStartTime;
+	R_AddPerfTime( true, R_PerfTime() - perfStart );
 
 	if ( r_debugRenderToTexture.GetInteger() == 1 ) {
 		common->Printf( "3d: %i, 2d: %i, SetBuf: %i, SwpBuf: %i, CpyRenders: %i, CpyFrameBuf: %i\n", c_draw3d, c_draw2d, c_setBuffers, c_swapBuffers, c_copyRenders, backEnd.c_copyFrameBuffer );

@@ -412,17 +412,31 @@ static const u32 s_handheldConfigs[] = {
 };
 static bool s_perfProfileChanged = false;
 
+static int s_appliedPerfProfile = -1;
+
 void Switch_ApplyPerformanceProfile( void ) {
 	const int profile = idMath::ClampInt( 0, 3, r_switchPerfProfile.GetInteger() );
+	s_appliedPerfProfile = profile;
 	const Result rc = apmSetPerformanceConfiguration( ApmPerformanceMode_Normal, s_handheldConfigs[profile] );
 	s_perfProfileChanged = ( profile != 0 ) && R_SUCCEEDED( rc );
-	common->Printf( "Switch handheld clock profile %d (0x%08X): %s\n", profile, s_handheldConfigs[profile],
-		R_SUCCEEDED( rc ) ? "set" : va( "failed (0x%X)", rc ) );
-	r_switchPerfProfile.ClearModified();
+
+	// A new configuration for the current mode is not always applied right away
+	// (in-game changes needed a restart). Cycling the CPU boost mode makes the
+	// system re-apply the mode's configuration, as it does after loading screens.
+	if ( R_SUCCEEDED( rc ) && s_loadingBoostDepth == 0 ) {
+		appletSetCpuBoostMode( ApmCpuBoostMode_FastLoad );
+		appletSetCpuBoostMode( ApmCpuBoostMode_Normal );
+	}
+
+	u32 active = 0;
+	apmGetPerformanceConfiguration( ApmPerformanceMode_Normal, &active );
+	common->Printf( "Switch handheld clock profile %d (0x%08X): %s, active handheld configuration 0x%08X\n",
+		profile, s_handheldConfigs[profile], R_SUCCEEDED( rc ) ? "set" : va( "failed (0x%X)", rc ), active );
 }
 
 void Switch_CheckPerformanceProfile( void ) {
-	if ( r_switchPerfProfile.IsModified() ) {
+	// compare with the value applied instead of relying on the modified flag
+	if ( idMath::ClampInt( 0, 3, r_switchPerfProfile.GetInteger() ) != s_appliedPerfProfile ) {
 		Switch_ApplyPerformanceProfile();
 	}
 }
@@ -746,8 +760,7 @@ whether a frame is CPU bound, GPU bound, or serialized.
 static idCVar com_logPerf( "com_logPerf", "0", CVAR_SYSTEM | CVAR_BOOL, "log a performance summary once per second (frame, game, render front/back end, swap wait)" );
 
 extern int time_gameFrame;
-extern int time_frontend;
-extern int time_backend;
+void R_TakePerfTimes( double &frontEndSec, double &backEndSec );
 
 static void Switch_UpdatePerfLog( int frameMsec, int gameMsec ) {
 	static int		windowStart = 0;
@@ -755,11 +768,13 @@ static void Switch_UpdatePerfLog( int frameMsec, int gameMsec ) {
 	static int		totalMsec = 0;
 	static int		worstMsec = 0;
 	static int		gameTotal = 0;
-	static int		frontTotal = 0;
-	static int		backTotal = 0;
+	static double	frontTotal = 0.0;
+	static double	backTotal = 0.0;
 	static float	swapTotal = 0.0f;
 
 	const float swapMsec = Switch_TakeSwapMsec();
+	double frontSec, backSec;
+	R_TakePerfTimes( frontSec, backSec );	// always drain, so the first logged window is not inflated
 	if ( !com_logPerf.GetBool() || frameMsec > 5000 ) {
 		windowStart = 0;
 		return;
@@ -768,15 +783,16 @@ static void Switch_UpdatePerfLog( int frameMsec, int gameMsec ) {
 	const int now = Sys_Milliseconds();
 	if ( windowStart == 0 ) {
 		windowStart = now;
-		frames = totalMsec = worstMsec = gameTotal = frontTotal = backTotal = 0;
+		frames = totalMsec = worstMsec = gameTotal = 0;
+		frontTotal = backTotal = 0.0;
 		swapTotal = 0.0f;
 	}
 	frames++;
 	totalMsec += frameMsec;
 	worstMsec = Max( worstMsec, frameMsec );
 	gameTotal += gameMsec;
-	frontTotal += time_frontend;
-	backTotal += time_backend;
+	frontTotal += frontSec * 1000.0;
+	backTotal += backSec * 1000.0;
 	swapTotal += swapMsec;
 
 	if ( now - windowStart >= 1000 && frames > 0 ) {
@@ -786,7 +802,8 @@ static void Switch_UpdatePerfLog( int frameMsec, int gameMsec ) {
 			gameTotal / n, frontTotal / n, backTotal / n, swapTotal / n,
 			cvarSystem->GetCVarInteger( "r_renderScaleCurrent" ) );
 		windowStart = now;
-		frames = totalMsec = worstMsec = gameTotal = frontTotal = backTotal = 0;
+		frames = totalMsec = worstMsec = gameTotal = 0;
+		frontTotal = backTotal = 0.0;
 		swapTotal = 0.0f;
 	}
 }
@@ -851,6 +868,8 @@ int main( int argc, char **argv ) {
 	pthread_attr_t attr;
 	pthread_attr_init( &attr );
 	pthread_attr_setstacksize( &attr, ENGINE_THREAD_STACK_SIZE );
+	// the engine (game + render) owns core 0; every other thread defaults to core 2
+	Switch_SetNextThreadCore( 0 );
 	pthread_t engineThread;
 	if ( pthread_create( &engineThread, &attr, Switch_EngineThread, NULL ) != 0 ) {
 		Switch_WriteFatalFile( "could not create the engine thread" );

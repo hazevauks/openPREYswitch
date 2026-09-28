@@ -188,6 +188,15 @@ x-right axis. `in_gyroDebug 1` prints raw values if a controller disagrees.
    (default 3) selects an official handheld configuration: 1 = GPU 384 MHz,
    2 = 460.8 MHz, 3 = 460.8 MHz + EMC 1600 MHz (0x92220007). The default
    profile is restored on exit.
+   At 460.8 MHz the bottleneck moved to CPU core 0 (89-97%, cores 1-2 under 10%;
+   GPU 68-99%). libnx starts every thread on core 0, including the OpenAL Soft
+   mixer. The engine link wraps `pthread_create` (`-Wl,--wrap=pthread_create`)
+   so every thread starts through a trampoline in `switch_threads.cpp`: the engine
+   stays on core 0, the async tick on core 1, and all other threads (library ones
+   included) go to core 2. `com_logPerf` render front/back columns now use
+   clock-tick timers (`R_PerfTime`). Profile changes apply in game: the check
+   compares values and cycles the CPU boost mode so the system re-applies the
+   configuration.
 1. Performance on the Tegra X1. Hardware test at stock clocks: 22 fps at full
    resolution, 43 fps at half (fill-rate bound; shadows cost ~10%). Dynamic
    resolution is on by default on Switch: `r_dynamicResolution`,

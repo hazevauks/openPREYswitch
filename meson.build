@@ -536,7 +536,9 @@ if is_switch and build_engine
     cpp_args: engine_cpp_args,
     c_args: engine_c_args,
     cpp_pch: pch_headers,
-    link_args: engine_link_args + ['-Wl,-Map,' + engine_client_binary_name + '.map'],
+    # --wrap=pthread_create: every thread, library ones included, starts through
+    # src/sys/switch/switch_threads.cpp, which places it on a CPU core.
+    link_args: engine_link_args + ['-Wl,-Map,' + engine_client_binary_name + '.map', '-Wl,--wrap=pthread_create'],
     name_suffix: 'elf',
     install: false,
   )

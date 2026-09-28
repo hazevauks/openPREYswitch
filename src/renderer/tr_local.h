@@ -1113,6 +1113,12 @@ GL wrapper/helper functions
 
 void	GL_SelectTexture( int unit );
 void	GL_CheckErrors( void );
+
+// fine-grained front end (RenderScene) and back end (RB_ExecuteBackEndCommands) CPU
+// time, accumulated until R_TakePerfTimes; used by platform performance logs
+double	R_PerfTime( void );
+void	R_AddPerfTime( bool backEnd, double seconds );
+void	R_TakePerfTimes( double &frontEndSec, double &backEndSec );
 void	GL_ClearStateDelta( void );
 void	GL_State( int stateVector );
 void	GL_TexEnv( int env );

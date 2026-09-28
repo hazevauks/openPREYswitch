@@ -27,6 +27,9 @@ void		Switch_RestorePerformanceProfile( void );
 void		Switch_InitThreads( void );
 void		Switch_StartAsyncThread( void );
 void		Switch_StopAsyncThread( void );
+// Core for the next pthread_create only (default for all others: core 2). See switch_threads.cpp.
+void		Switch_SetNextThreadCore( int core );
+int			Switch_ThreadsCreated( void );
 
 // Input (switch_input.cpp). Called from Sys_GenerateEvents on the main thread.
 void		Switch_PollInput( void );
