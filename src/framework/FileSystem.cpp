@@ -900,6 +900,7 @@ public:
 
 	virtual void			Init( void );
 	virtual void			StartBackgroundDownloadThread( void );
+	void					StopBackgroundDownloadThread( void );	// not in idFileSystem: platform shutdown only
 	virtual void			Restart( void );
 	virtual void			Shutdown( bool reloading );
 	virtual bool			IsInitialized( void ) const;
@@ -4537,11 +4538,20 @@ BackgroundDownload
 Reads part of a file from a background thread.
 ===================
 */
+// Set by FS_StopBackgroundDownloadThread. Platforms whose processes outlive the
+// engine (Switch homebrew returns to the loader in the same process) must not
+// leave this thread running code that is about to be unloaded.
+static volatile bool fs_backgroundThreadExit = false;
+
 dword BackgroundDownloadThread( void *parms ) {
 	while( 1 ) {
 		Sys_EnterCriticalSection();
 		backgroundDownload_t	*bgl = fileSystemLocal.backgroundDownloads;
 		if ( !bgl ) {
+			if ( fs_backgroundThreadExit ) {
+				Sys_LeaveCriticalSection();
+				return 0;
+			}
 			Sys_LeaveCriticalSection();
 			Sys_WaitForEvent();
 			continue;
@@ -4656,6 +4666,7 @@ idFileSystemLocal::StartBackgroundReadThread
 */
 void idFileSystemLocal::StartBackgroundDownloadThread() {
 	if ( !backgroundThread.threadHandle ) {
+		fs_backgroundThreadExit = false;
 		Sys_CreateThread( (xthread_t)BackgroundDownloadThread, NULL, THREAD_NORMAL, backgroundThread, "backgroundDownload", g_threads, &g_thread_count );
 		if ( !backgroundThread.threadHandle ) {
 			common->Warning( "idFileSystemLocal::StartBackgroundDownloadThread: failed" );
@@ -4663,6 +4674,31 @@ void idFileSystemLocal::StartBackgroundDownloadThread() {
 	} else {
 		common->Printf( "background thread already running\n" );
 	}
+}
+
+/*
+=================
+idFileSystemLocal::StopBackgroundDownloadThread
+
+Ends the background thread and waits for it. Needed where the process outlives
+the engine: Switch homebrew returns to the loader in the same process, so a
+thread left waiting here keeps running unloaded code and crashes the system
+when the software is closed.
+=================
+*/
+void idFileSystemLocal::StopBackgroundDownloadThread() {
+	if ( !backgroundThread.threadHandle ) {
+		return;
+	}
+	Sys_EnterCriticalSection();
+	fs_backgroundThreadExit = true;
+	Sys_LeaveCriticalSection();
+	Sys_TriggerEvent();		// wake it from Sys_WaitForEvent
+	Sys_DestroyThread( backgroundThread );
+}
+
+void FS_StopBackgroundDownloadThread( void ) {
+	fileSystemLocal.StopBackgroundDownloadThread();
 }
 
 /*

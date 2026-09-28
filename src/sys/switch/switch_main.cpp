@@ -78,7 +78,10 @@ blocked in pthread_join. The system then crashed when the process closed
 ("Closing software"). The engine thread now just ends, and main() returns.
 ================
 */
+void FS_StopBackgroundDownloadThread( void );
+
 static void Switch_Exit( int ret ) {
+	FS_StopBackgroundDownloadThread();
 	Switch_StopAsyncThread();
 	s_exitCode = ret;
 	if ( pthread_equal( pthread_self(), s_mainThread ) ) {
@@ -683,6 +686,65 @@ static void Switch_ReportHitch( int frameMsec, int opens0, double openSec0, long
 		cvarSystem->GetCVarInteger( "r_renderScaleCurrent" ) );
 }
 
+/*
+================
+Switch_UpdatePerfLog
+
+com_logPerf 1 logs a one-line summary per second: frame rate, average and worst
+frame, and where the time went. Game logic, render front end and back end come
+from the com_speeds counters; swap is time blocked in eglSwapBuffers (CPU
+waiting for the GPU). Comparing these with the Status Monitor CPU/GPU load shows
+whether a frame is CPU bound, GPU bound, or serialized.
+================
+*/
+static idCVar com_logPerf( "com_logPerf", "0", CVAR_SYSTEM | CVAR_BOOL, "log a performance summary once per second (frame, game, render front/back end, swap wait)" );
+
+extern int time_gameFrame;
+extern int time_frontend;
+extern int time_backend;
+
+static void Switch_UpdatePerfLog( int frameMsec, int gameMsec ) {
+	static int		windowStart = 0;
+	static int		frames = 0;
+	static int		totalMsec = 0;
+	static int		worstMsec = 0;
+	static int		gameTotal = 0;
+	static int		frontTotal = 0;
+	static int		backTotal = 0;
+	static float	swapTotal = 0.0f;
+
+	const float swapMsec = Switch_TakeSwapMsec();
+	if ( !com_logPerf.GetBool() || frameMsec > 5000 ) {
+		windowStart = 0;
+		return;
+	}
+
+	const int now = Sys_Milliseconds();
+	if ( windowStart == 0 ) {
+		windowStart = now;
+		frames = totalMsec = worstMsec = gameTotal = frontTotal = backTotal = 0;
+		swapTotal = 0.0f;
+	}
+	frames++;
+	totalMsec += frameMsec;
+	worstMsec = Max( worstMsec, frameMsec );
+	gameTotal += gameMsec;
+	frontTotal += time_frontend;
+	backTotal += time_backend;
+	swapTotal += swapMsec;
+
+	if ( now - windowStart >= 1000 && frames > 0 ) {
+		const float n = (float)frames;
+		common->Printf( "perf: %.1f fps | frame %.1f ms (worst %d) | game %.1f | render front %.1f back %.1f | swap wait %.1f | 3D %d%%\n",
+			n * 1000.0f / ( now - windowStart ), totalMsec / n, worstMsec,
+			gameTotal / n, frontTotal / n, backTotal / n, swapTotal / n,
+			cvarSystem->GetCVarInteger( "r_renderScaleCurrent" ) );
+		windowStart = now;
+		frames = totalMsec = worstMsec = gameTotal = frontTotal = backTotal = 0;
+		swapTotal = 0.0f;
+	}
+}
+
 static void *Switch_EngineThread( void * ) {
 	idList<const char *> args;
 	for ( size_t i = 0; i < sizeof( s_defaultArgs ) / sizeof( s_defaultArgs[0] ); i++ ) {
@@ -705,11 +767,16 @@ static void *Switch_EngineThread( void * ) {
 		double openSec0, readSec0;
 		long long bytes0;
 		FS_GetProfileTotals( opens0, openSec0, bytes0, readSec0 );
+		const int gameMsec0 = time_gameFrame;
 		const int frameStart = Sys_Milliseconds();
 
 		common->Frame();
 
-		Switch_ReportHitch( Sys_Milliseconds() - frameStart, opens0, openSec0, bytes0, readSec0 );
+		const int frameMsec = Sys_Milliseconds() - frameStart;
+		Switch_ReportHitch( frameMsec, opens0, openSec0, bytes0, readSec0 );
+		// com_speeds resets time_gameFrame after printing; treat a drop as a reset
+		const int gameMsec = ( time_gameFrame >= gameMsec0 ) ? time_gameFrame - gameMsec0 : time_gameFrame;
+		Switch_UpdatePerfLog( frameMsec, gameMsec );
 	}
 	return NULL;
 }
@@ -750,6 +817,24 @@ int main( int argc, char **argv ) {
 
 	// the engine thread is gone: release hardware it left running
 	Switch_ShutdownGyro();
+
+	// Safety net: returning to the homebrew loader keeps this process, so any
+	// thread still alive (e.g. one a library never joined) would run unloaded
+	// code and crash the system when the software is closed. If anything besides
+	// this thread remains, end the whole process instead (back to HOME).
+	u64 threadIds[16];
+	s32 threadCount = 0;
+	if ( R_SUCCEEDED( svcGetThreadList( &threadCount, threadIds, 16, INVALID_HANDLE ) ) && threadCount > 1 ) {
+		char note[128];
+		idStr::snPrintf( note, sizeof( note ), "exit: %d threads still alive; ended the process instead of returning to the loader", (int)threadCount );
+		FILE *f = fopen( SWITCH_BASE_PATH "/openprey_exit.txt", "wb" );
+		if ( f ) {
+			fputs( note, f );
+			fputc( '\n', f );
+			fclose( f );
+		}
+		svcExitProcess();
+	}
 
 	if ( s_nxlinkActive ) {
 		socketExit();

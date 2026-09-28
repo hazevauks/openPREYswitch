@@ -144,12 +144,24 @@ void GLimp_Shutdown( void ) {
 	GLimp_DestroyEGL();
 }
 
+// time spent inside eglSwapBuffers, for com_logPerf (switch_main.cpp): a long
+// swap means the CPU is waiting for the GPU to finish the frame
+static double s_swapMsecAccum = 0.0;
+
+float Switch_TakeSwapMsec( void ) {
+	const float msec = (float)s_swapMsecAccum;
+	s_swapMsecAccum = 0.0;
+	return msec;
+}
+
 void GLimp_SwapBuffers( void ) {
 	if ( r_swapInterval.IsModified() ) {
 		r_swapInterval.ClearModified();
 		eglSwapInterval( s_display, r_swapInterval.GetInteger() );
 	}
+	const u64 start = armGetSystemTick();
 	eglSwapBuffers( s_display, s_surface );
+	s_swapMsecAccum += armTicksToNs( armGetSystemTick() - start ) / 1000000.0;
 }
 
 void GLimp_SetGamma( unsigned short red[256], unsigned short green[256], unsigned short blue[256] ) {
