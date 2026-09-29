@@ -367,17 +367,146 @@ void Sys_ShutdownSymbols( void ) {
 }
 
 /*
-================
-Sys_SetLoadingBoost
+============================================================================
+CLOCKS
 
-Raises the CPU clock while loading with the system FastLoad boost mode (the
-one retail games use on loading screens; it also drops the GPU to its
-minimum, which a loading screen does not need). Calls nest; the boost ends
-when every enable has been matched. Called around common->Init and
-idSessionLocal::ExecuteMapChange.
+Performance profile (r_switchPerfProfile). Handheld mode runs applications on
+PerformanceConfiguration 0x00020003 (CPU 1020 / GPU 307.2 / EMC 1331.2 MHz);
+hardware test there: GPU 99% busy at 20-25 fps. Profiles 1-3 pick stronger
+official handheld configurations (switchbrew PTM_services). Docked mode
+(PerformanceMode Boost) already defaults to GPU 768 MHz and is left alone.
+
+Profile 3 also raises the CPU to 1224 MHz (the docked "CPU boost" rate, well
+under the 1785 MHz the system uses on loading screens) through clkrst (pcv
+before 8.0.0), the service sys-clk uses. The system puts the CPU back to the
+configuration's rate whenever it re-applies a configuration (loading boost,
+dock change, sleep), so the rate is checked once a second and after every
+loading boost. Everything goes back to the defaults on exit.
+
+Loading boost (Sys_SetLoadingBoost): the system FastLoad boost mode, the one
+retail games use on loading screens. It raises the CPU to 1785 MHz and drops
+the GPU to its minimum, which a loading screen does not need. Calls nest;
+the boost ends when every enable has been matched. Used around common->Init
+and idSessionLocal::ExecuteMapChange.
+============================================================================
+*/
+
+static idCVar r_switchPerfProfile( "r_switchPerfProfile", "3", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
+	"clock profile (official handheld configurations): 0 = system default (GPU 307 MHz), 1 = GPU 384 MHz, 2 = GPU 460.8 MHz, 3 = GPU 460.8 MHz + memory 1600 MHz + CPU 1224 MHz", 0, 3 );
+
+typedef struct {
+	u32		config;		// handheld PerformanceConfiguration
+	u32		cpuHz;		// CPU rate to hold, 0 = the configuration's
+} switchPerfProfile_t;
+
+static const u32 SWITCH_HANDHELD_DEFAULT_CONFIG	= 0x00020003;	// Cpu1020MhzGpu307MhzEmc1331Mhz
+static const u32 SWITCH_DEFAULT_CPU_HZ			= 1020000000;
+static const switchPerfProfile_t s_perfProfiles[] = {
+	{ SWITCH_HANDHELD_DEFAULT_CONFIG,	0 },
+	{ 0x00020004,						0 },			// Cpu1020MhzGpu384MhzEmc1331Mhz
+	{ 0x92220008,						0 },			// Cpu1020MhzGpu460MhzEmc1331Mhz
+	{ 0x92220007,						1224000000 },	// Cpu1020MhzGpu460MhzEmc1600Mhz, CPU raised to 1224 MHz
+};
+static const int NUM_PERF_PROFILES = sizeof( s_perfProfiles ) / sizeof( s_perfProfiles[0] );
+
+static int		s_loadingBoostDepth = 0;
+static int		s_appliedPerfProfile = -1;
+static bool		s_perfConfigChanged = false;	// handheld configuration differs from the default
+static int		s_lastCpuCheckTime = 0;
+
+// CPU clock through clkrst (8.0.0+) or pcv
+static bool				s_cpuClockOpen = false;
+static bool				s_cpuClockUsesClkrst = false;
+static ClkrstSession	s_cpuClockSession;
+static bool				s_cpuClockChanged = false;	// the CPU was moved off the configuration's rate
+
+static bool Switch_OpenCpuClock( void ) {
+	if ( s_cpuClockOpen ) {
+		return true;
+	}
+	if ( hosversionAtLeast( 8, 0, 0 ) ) {
+		if ( R_FAILED( clkrstInitialize() ) ) {
+			return false;
+		}
+		if ( R_FAILED( clkrstOpenSession( &s_cpuClockSession, PcvModuleId_CpuBus, 3 ) ) ) {
+			clkrstExit();
+			return false;
+		}
+		s_cpuClockUsesClkrst = true;
+	} else {
+		if ( R_FAILED( pcvInitialize() ) ) {
+			return false;
+		}
+		s_cpuClockUsesClkrst = false;
+	}
+	s_cpuClockOpen = true;
+	return true;
+}
+
+static void Switch_CloseCpuClock( void ) {
+	if ( !s_cpuClockOpen ) {
+		return;
+	}
+	if ( s_cpuClockUsesClkrst ) {
+		clkrstCloseSession( &s_cpuClockSession );
+		clkrstExit();
+	} else {
+		pcvExit();
+	}
+	s_cpuClockOpen = false;
+}
+
+static u32 Switch_GetCpuHz( void ) {
+	u32 hz = 0;
+	if ( s_cpuClockUsesClkrst ) {
+		clkrstGetClockRate( &s_cpuClockSession, &hz );
+	} else {
+		pcvGetClockRate( PcvModule_CpuBus, &hz );
+	}
+	return hz;
+}
+
+static Result Switch_SetCpuHz( u32 hz ) {
+	return s_cpuClockUsesClkrst ? clkrstSetClockRate( &s_cpuClockSession, hz ) : pcvSetClockRate( PcvModule_CpuBus, hz );
+}
+
+/*
+================
+Switch_EnforceCpuClock
+
+Holds the profile's CPU rate. Not while the loading boost runs (it wants 1785 MHz).
 ================
 */
-static int s_loadingBoostDepth = 0;
+static void Switch_EnforceCpuClock( bool log ) {
+	if ( s_appliedPerfProfile < 0 || s_loadingBoostDepth > 0 ) {
+		return;
+	}
+	const u32 wanted = s_perfProfiles[s_appliedPerfProfile].cpuHz;
+	if ( wanted == 0 ) {
+		if ( s_cpuClockChanged && s_cpuClockOpen ) {
+			// profile lowered from 3: hand the CPU back to the configuration's rate
+			Switch_SetCpuHz( SWITCH_DEFAULT_CPU_HZ );
+			s_cpuClockChanged = false;
+		}
+		return;
+	}
+	if ( !Switch_OpenCpuClock() ) {
+		if ( log ) {
+			common->Printf( "CPU clock: clkrst/pcv unavailable, the CPU stays at the configuration's rate\n" );
+		}
+		return;
+	}
+	const u32 current = Switch_GetCpuHz();
+	if ( current == wanted ) {
+		return;
+	}
+	const Result rc = Switch_SetCpuHz( wanted );
+	s_cpuClockChanged = s_cpuClockChanged || R_SUCCEEDED( rc );
+	if ( log ) {
+		common->Printf( "CPU clock %u -> %u MHz: %s\n", current / 1000000, wanted / 1000000,
+			R_SUCCEEDED( rc ) ? "set" : va( "failed (0x%X)", rc ) );
+	}
+}
 
 void Sys_SetLoadingBoost( bool enable ) {
 	if ( enable ) {
@@ -386,39 +515,15 @@ void Sys_SetLoadingBoost( bool enable ) {
 		}
 	} else if ( s_loadingBoostDepth > 0 && --s_loadingBoostDepth == 0 ) {
 		appletSetCpuBoostMode( ApmCpuBoostMode_Normal );
+		Switch_EnforceCpuClock( false );
 	}
 }
 
-/*
-================
-Performance profile
-
-Handheld mode runs applications on the default PerformanceConfiguration
-0x00020003 (CPU 1020 / GPU 307.2 / EMC 1331.2 MHz). Hardware test at that
-profile: GPU 99% busy at 20-25 fps. Retail games may pick stronger official
-handheld configurations, listed here (switchbrew PTM_services). Docked
-(PerformanceMode Boost) already defaults to GPU 768 MHz and is left alone.
-================
-*/
-static idCVar r_switchPerfProfile( "r_switchPerfProfile", "3", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
-	"handheld clock profile (official configurations): 0 = system default (GPU 307 MHz), 1 = GPU 384 MHz, 2 = GPU 460.8 MHz, 3 = GPU 460.8 MHz + memory 1600 MHz", 0, 3 );
-
-static const u32 SWITCH_HANDHELD_DEFAULT_CONFIG = 0x00020003;	// Cpu1020MhzGpu307MhzEmc1331Mhz
-static const u32 s_handheldConfigs[] = {
-	SWITCH_HANDHELD_DEFAULT_CONFIG,
-	0x00020004,		// Cpu1020MhzGpu384MhzEmc1331Mhz
-	0x92220008,		// Cpu1020MhzGpu460MhzEmc1331Mhz
-	0x92220007,		// Cpu1020MhzGpu460MhzEmc1600Mhz
-};
-static bool s_perfProfileChanged = false;
-
-static int s_appliedPerfProfile = -1;
-
 void Switch_ApplyPerformanceProfile( void ) {
-	const int profile = idMath::ClampInt( 0, 3, r_switchPerfProfile.GetInteger() );
+	const int profile = idMath::ClampInt( 0, NUM_PERF_PROFILES - 1, r_switchPerfProfile.GetInteger() );
 	s_appliedPerfProfile = profile;
-	const Result rc = apmSetPerformanceConfiguration( ApmPerformanceMode_Normal, s_handheldConfigs[profile] );
-	s_perfProfileChanged = ( profile != 0 ) && R_SUCCEEDED( rc );
+	const Result rc = apmSetPerformanceConfiguration( ApmPerformanceMode_Normal, s_perfProfiles[profile].config );
+	s_perfConfigChanged = ( profile != 0 ) && R_SUCCEEDED( rc );
 
 	// A new configuration for the current mode is not always applied right away
 	// (in-game changes needed a restart). Cycling the CPU boost mode makes the
@@ -430,21 +535,35 @@ void Switch_ApplyPerformanceProfile( void ) {
 
 	u32 active = 0;
 	apmGetPerformanceConfiguration( ApmPerformanceMode_Normal, &active );
-	common->Printf( "Switch handheld clock profile %d (0x%08X): %s, active handheld configuration 0x%08X\n",
-		profile, s_handheldConfigs[profile], R_SUCCEEDED( rc ) ? "set" : va( "failed (0x%X)", rc ), active );
+	common->Printf( "Switch clock profile %d (0x%08X): %s, active handheld configuration 0x%08X\n",
+		profile, s_perfProfiles[profile].config, R_SUCCEEDED( rc ) ? "set" : va( "failed (0x%X)", rc ), active );
+
+	Switch_EnforceCpuClock( true );
+	s_lastCpuCheckTime = Sys_Milliseconds();
 }
 
 void Switch_CheckPerformanceProfile( void ) {
 	// compare with the value applied instead of relying on the modified flag
-	if ( idMath::ClampInt( 0, 3, r_switchPerfProfile.GetInteger() ) != s_appliedPerfProfile ) {
+	if ( idMath::ClampInt( 0, NUM_PERF_PROFILES - 1, r_switchPerfProfile.GetInteger() ) != s_appliedPerfProfile ) {
 		Switch_ApplyPerformanceProfile();
+		return;
+	}
+	const int now = Sys_Milliseconds();
+	if ( now - s_lastCpuCheckTime >= 1000 ) {
+		s_lastCpuCheckTime = now;
+		Switch_EnforceCpuClock( false );
 	}
 }
 
 void Switch_RestorePerformanceProfile( void ) {
-	if ( s_perfProfileChanged ) {
+	if ( s_cpuClockChanged && s_cpuClockOpen ) {
+		Switch_SetCpuHz( SWITCH_DEFAULT_CPU_HZ );
+		s_cpuClockChanged = false;
+	}
+	Switch_CloseCpuClock();
+	if ( s_perfConfigChanged ) {
 		apmSetPerformanceConfiguration( ApmPerformanceMode_Normal, SWITCH_HANDHELD_DEFAULT_CONFIG );
-		s_perfProfileChanged = false;
+		s_perfConfigChanged = false;
 	}
 }
 
@@ -866,6 +985,9 @@ static void *Switch_EngineThread( void * ) {
 		R_TakePerfCounters( perf );
 		Switch_ReportHitch( frameMsec, gameMsec, swapMsec, perf, opens0, openSec0, bytes0, readSec0 );
 		Switch_UpdatePerfLog( frameMsec, gameMsec, swapMsec, perf );
+
+		// r_fpsLock: wait here, between frames, never inside one (see switch_glimp.cpp)
+		Switch_PaceFrame();
 	}
 	return NULL;
 }

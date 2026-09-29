@@ -1221,7 +1221,7 @@ void		GLimp_Shutdown( void );
 
 void		GLimp_SwapBuffers( void );
 #ifdef __SWITCH__
-float		GLimp_LastSwapWaitMsec( void );	// time the last swap waited for vblank / r_fpsLock
+float		GLimp_LastFrameWaitMsec( void );	// time the last frame waited in the swap and for r_fpsLock
 #endif
 // Calls the system specific swapbuffers routine, and may also perform
 // other system specific cvar checks that happen every frame.

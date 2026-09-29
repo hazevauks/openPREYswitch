@@ -90,17 +90,22 @@ MSYSTEM=MSYS /c/Users/Usuario/Downloads/devkitPro/msys2/usr/bin/bash.exe -lc "cd
   - Saves e logs.
 - Ler um crash:
   `aarch64-none-elf-addr2line -f -C -e .tmp/elf-builds/OpenPrey-<commit>.elf <offsets>`
-- **Interagir** (falar com NPCs, apertar botões, usar telas) é o botão de ataque
-  (ZR), como no Prey original: chegue perto e mire no alvo. O zoom (D-pad para
-  cima) só funciona com uma arma que tem zoom.
+- **Interagir** (apertar botões, usar telas) é o botão de ataque (ZR), como no
+  Prey original: chegue perto e mire no alvo.
+  - O zoom (D-pad para cima) só funciona com uma arma (`hhPlayer`, código do jogo).
+  - **Falar com NPCs no bar não funciona.** O código que trata a conversa
+    (`hhPlayer::Weapon_Combat`, `src/Prey/game_player.cpp`) roda depois de uma
+    saída antecipada quando as armas estão desativadas, como no bar. É código do
+    jogo: a correção pertence ao OpenPrey-GameLibs e deve ser conferida antes na
+    versão de Windows.
 - **Console do jogo:** o botão **−** abre e fecha; **A** abre o teclado do sistema.
 
 ## 4. Mapa do código do Switch
 
 | Arquivo | Função |
 |---|---|
-| `src/sys/switch/switch_main.cpp` | `main`, thread do motor (pilha de 16 MB), caminhos, eventos, handler de crash, perfis de clock (`r_switchPerfProfile`), boost durante o carregamento, `com_logPerf`/`com_logHitches`, saída limpa |
-| `switch_glimp.cpp` | EGL/Mesa, contexto GL 4.3 compat 1280x720, swap, `r_fpsLock` |
+| `src/sys/switch/switch_main.cpp` | `main`, thread do motor (pilha de 16 MB), caminhos, eventos, handler de crash, clocks (perfis `r_switchPerfProfile`, CPU via clkrst, boost no carregamento), `com_logPerf`/`com_logHitches`, saída limpa |
+| `switch_glimp.cpp` | EGL/Mesa, contexto GL 4.3 compat 1280x720, swap, trava de fps (`r_fpsLock`, `Switch_PaceFrame`) |
 | `switch_input.cpp` | Controles (jogo/menu/console), binds padrão versionados (`in_switchControlScheme`), teclado do sistema, toque |
 | `switch_gyro.cpp` | Mira por giroscópio (`in_gyro*`) |
 | `switch_threads.cpp` | Threads e locks; `__wrap_pthread_create` coloca cada thread num núcleo |
@@ -149,34 +154,47 @@ MSYSTEM=MSYS /c/Users/Usuario/Downloads/devkitPro/msys2/usr/bin/bash.exe -lc "cd
 9. **Giroscópio com o eixo X invertido:** corrigido no código. Quem já tinha
    `in_gyroInvertX 1` salvo precisa voltar para 0.
 
+10. **Trava de fps que parecia travamento no carregamento.** Durante o
+    carregamento, o jogo redesenha a tela de loading depois de quase cada arquivo
+    lido (`PacifierUpdate`). Uma espera de 33 ms na troca de quadro virava minutos
+    de carregamento, com a CPU a ~15%. Swap interval 2 congelava a tela. A trava
+    agora espera **entre** quadros do laço principal (`Switch_PaceFrame`), nunca
+    dentro de um quadro. Regra geral: nada de dormir dentro do render.
+11. **Nem todo problema de controle é do port.** Interagir pelo botão de ataque,
+    o zoom que exige arma e a conversa com NPC ficam no código do jogo
+    (`src/Prey`), que é igual em todas as plataformas. Antes de "consertar" um
+    controle, confira na versão de Windows se o comportamento é o mesmo.
+
 ## 6. Desempenho: o que já sabemos
 
-Medido no console com GPU a 460,8 MHz e memória a 1600 MHz (perfil 3):
+A referência completa, em inglês, está na seção Performance de
+[switch-port.md](switch-port.md). Resumo:
 
 - **Evolução:**
   - Original: 10-15 fps.
-  - Pós-processamento desligado, resolução dinâmica, texturas DXT e GPU a 460,8 MHz: ~30 fps parado.
-  - Carregamento: 118 s → 50 s.
-- **O backend (envio de desenhos ao driver) é 75-85% do quadro.** Jogo: ~2-4 ms.
-  Preparação do render: ~2-5 ms.
-- **Parado, o limite é a GPU:** metade da resolução dobra o fps; GPU a 99%; RAM
-  ~15 GB/s.
-- **Ao girar a câmera, o backend fica até 4x mais lento** com quase o mesmo número
-  de desenhos, e há vários quadros de ~100 ms sem leitura de arquivo. Causa ainda
-  não confirmada. Suspeitos:
-  - buffers de vértices recriados a cada quadro para modelos animados (veja
-    `buffers` no `com_logPerf`);
-  - sincronização da CPU com a GPU (veja `r_perfGpuSync`).
+  - Hoje, cenas leves: ~30 fps.
+  - Cenas pesadas (o bar cheio de NPCs, ~2000 desenhos): ~9-10 fps.
+  - Carregamento: 118 s → ~50 s.
+- **O backend (envio de desenhos ao driver) é 75-85% do quadro.**
+- **Há dois tipos de cena:**
+  - **Presas na GPU** (banheiro): metade da resolução dobra o fps. A resolução
+    dinâmica resolve.
+  - **Presas na CPU/driver** (bar): ~40 µs por desenho, e a resolução não muda
+    nada. A resolução dinâmica agora percebe isso e desfaz a redução.
 - **Descartado:**
-  - Cache de parâmetros ARB: nenhum ganho.
-  - Mesa 26: mais lento e com falhas gráficas.
-  - SaltyNX: trocado pelo monitor nativo do jogo.
-- **Decisão:** trava em 30 fps (`r_fpsLock 30`), com a resolução dinâmica
-  segurando os 30.
-- **Expectativa realista:** 60 fps estáveis exigiriam um renderer novo, escrito
-  direto na API nativa (deko3d), como o do Doom 3 oficial. São meses de trabalho.
-- **Próximo passo estrutural:** rodar o backend numa thread própria, no núcleo 2
-  (hoje jogo, preparação e envio rodam em série no núcleo 0).
+  - cache de parâmetros ARB (nenhum ganho);
+  - recriação de buffers de vértices (pequena);
+  - Mesa 26 (mais lento e com falhas gráficas);
+  - SaltyNX (trocado pelo monitor nativo).
+- **Próximo suspeito:** `r_useIndexBuffers 0`. Com 0, cada desenho copia os
+  índices para o fluxo de comandos da GPU. Testar com 1 durante o jogo.
+- **Decisão:** trava em 30 fps, com CPU a 1224 MHz no perfil 3 para segurar um
+  mínimo nas cenas pesadas.
+- **Expectativa realista:**
+  - 30 fps cravados nas cenas pesadas exigem cortar o custo por desenho
+    (índices, backend numa thread própria);
+  - 60 fps estáveis exigiriam um renderer novo, na API nativa (deko3d), como o
+    do Doom 3 oficial. São meses de trabalho.
 
 ### Cvars úteis
 
@@ -186,19 +204,24 @@ Medido no console com GPU a 460,8 MHz e memória a 1600 MHz (perfil 3):
 | `com_logPerf 1` | 0 | Uma linha de desempenho por segundo no log |
 | `com_logHitches` | 100 | Registra quadros acima de N ms, com o detalhamento |
 | `r_perfGpuSync 1` | 0 | Diagnóstico: separa tempo de CPU e de GPU (baixa o fps) |
-| `r_fpsLock` | 30 | 30 = travado; 0 = destravado. Funciona dormindo antes da troca de quadro. **Não use swap interval 2: congelou a tela de carregamento no console.** |
-| `r_dynamicResolution` | 1 | Resolução dinâmica |
+| `r_fpsLock` | 30 | 30 = travado; 0 = destravado (de 1 a 19 vale 30) |
+| `r_dynamicResolution` | 1 | Resolução dinâmica; testa cada redução e desfaz se não ajudou |
 | `r_dynamicResolutionMin` | 50 | Resolução mínima, em % |
 | `r_renderScale` | 100 | Resolução máxima, em % |
-| `r_switchPerfProfile` | 3 | 0 = padrão; 1 = GPU 384 MHz; 2 = GPU 460,8; 3 = GPU 460,8 + RAM 1600 |
+| `r_switchPerfProfile` | 3 | 0 = padrão; 1 = GPU 384 MHz; 2 = GPU 460,8; 3 = GPU 460,8 + RAM 1600 + CPU 1224 |
+| `r_useIndexBuffers` | 0 | Índices em buffers da GPU: o próximo teste |
 | `image_compressTextures` | 1 | Texturas DXT (2 inclui normal maps) |
 | `r_cacheProgramParms` | 1 | Cache de parâmetros (sem efeito medido) |
 | `in_gyro` | 1 | 0 = desligado; 1 = sempre; 2 = só mirando com ZL |
 
-**Como medir:** peça ao testador `com_logPerf 1`, `r_fpsLock 0` e
-`r_dynamicResolution 0`, sempre nos mesmos lugares (parado no banheiro, girando
-a câmera no corredor), trocando só uma cvar por vez. Os prints do Status Monitor
-completam os dados.
+**Como medir:**
+
+1. Peça ao testador `com_logPerf 1`, `r_fpsLock 0` e `r_dynamicResolution 0`.
+2. Meça sempre nos mesmos lugares: parado no banheiro, no bar cheio de NPCs e
+   girando a câmera no corredor.
+3. Troque só uma cvar por vez.
+
+Os prints do Status Monitor completam os dados.
 
 ## 7. Roteiro para portar outro jogo (id Tech 4 ou parecido)
 
@@ -232,11 +255,17 @@ A ordem que funcionou aqui:
 10. **Controles:** esquema moderno de FPS, binds versionados e giroscópio opcional.
 11. **Saída limpa:** parar todas as threads e restaurar os serviços do sistema.
 
+
 ## 8. Pendências
 
-- Analisar o próximo log (`buffers`, `gpu wait`, trava de 30) e corrigir a queda
-  ao girar a câmera.
+- Medir `r_useIndexBuffers 1`. Se ajudar, tornar padrão no Switch, com migração
+  única para configs antigos, como a do `in_switchControlScheme`.
 - Backend numa thread própria (núcleo 2), atrás de uma cvar.
+- Confirmar no console:
+  - a CPU a 1224 MHz (linha `CPU clock` no log e no Status Monitor);
+  - a trava de 30 fps sem lentidão no carregamento.
+- Conversa com NPC no bar: confirmar na versão de Windows e corrigir no
+  OpenPrey-GameLibs (seção 3).
 - Levar a correção de `Pvs.cpp` para o OpenPrey-GameLibs.
 - Tempo de carregamento: ~28 s ainda são imagens.
 - Áudio: confirmar qual backend o OpenAL Soft usa. Multiplayer: sockets de verdade.

@@ -31,39 +31,12 @@ static EGLDisplay	s_display = EGL_NO_DISPLAY;
 static EGLContext	s_context = EGL_NO_CONTEXT;
 static EGLSurface	s_surface = EGL_NO_SURFACE;
 
-/*
-===================
-Frame rate lock
-
-r_fpsLock 30 paces frames 33.3 ms apart, so the frame rate holds steady instead
-of swinging between 20 and 45 fps, and the spare time is left idle (cooler,
-longer battery). The pacing sleeps before the swap and keeps the swap interval
-from r_swapInterval (0 by default): hardware test with swap interval 2 froze
-the loading screen. r_fpsLock 0 turns pacing off.
-===================
-*/
-static idCVar r_fpsLock( "r_fpsLock", "30", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "lock the frame rate: 30 = hold 30 fps, 0 = off (values from 20 to 60 set the rate)", 0, 60 );
-
 static EGLint	s_maxSwapInterval = 1;
-static double	s_limiterFrameMsec = 0.0;	// > 0: frame period to hold
-static u64		s_nextFrameTick = 0;		// when the next paced swap may happen
-static double	s_lastSwapWaitMsec = 0.0;
 
 static void GLimp_ApplySwapInterval( void ) {
-	const int lock = r_fpsLock.GetInteger();
-	s_limiterFrameMsec = 0.0;
-	s_nextFrameTick = 0;
-	if ( lock > 0 ) {
-		// 1..19 (e.g. "r_fpsLock 1") means "on": use 30
-		s_limiterFrameMsec = 1000.0 / ( lock >= 20 ? lock : 30 );
-	}
 	const int interval = idMath::ClampInt( 0, Max( 1, (int)s_maxSwapInterval ), r_swapInterval.GetInteger() );
 	eglSwapInterval( s_display, interval );
-	if ( s_limiterFrameMsec > 0.0 ) {
-		common->Printf( "swap interval %d, frame rate locked at %.0f fps\n", interval, 1000.0 / s_limiterFrameMsec );
-	} else {
-		common->Printf( "swap interval %d, frame rate unlocked\n", interval );
-	}
+	common->Printf( "swap interval %d\n", interval );
 }
 
 static void GLimp_DestroyEGL( void ) {
@@ -182,45 +155,81 @@ void GLimp_Shutdown( void ) {
 	GLimp_DestroyEGL();
 }
 
+/*
+===================
+Frame timing and the frame rate lock
+
+r_fpsLock 30 holds frames 33.3 ms apart, so the frame rate stays steady instead
+of swinging between 20 and 45 fps, and the spare time is left idle (cooler,
+longer battery). Switch_PaceFrame sleeps between main loop frames, never inside
+a frame. Two earlier designs failed on hardware:
+- swap interval 2 (EGL reports a huge maximum) froze the loading screen;
+- sleeping before each swap made map loads crawl: the loading screen is
+  redrawn after nearly every file read (idSessionLocal::PacifierUpdate), so
+  each read waited up to 33 ms and a load took minutes at ~15% CPU.
+===================
+*/
+static idCVar r_fpsLock( "r_fpsLock", "30", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "lock the frame rate: 30 = hold 30 fps, 0 = off (20 to 60 set the rate, 1 to 19 mean 30)", 0, 60 );
+
+static double	s_swapMsecAccum = 0.0;		// eglSwapBuffers time since Switch_TakeSwapMsec
+static double	s_frameWaitMsec = 0.0;		// last frame: swap + pacing
+static u64		s_nextFrameTick = 0;		// when the next paced frame may start
+
 // time spent inside eglSwapBuffers, for com_logPerf (switch_main.cpp): a long
 // swap means the CPU is waiting for the GPU to finish the frame
-static double s_swapMsecAccum = 0.0;
-
 float Switch_TakeSwapMsec( void ) {
 	const float msec = (float)s_swapMsecAccum;
 	s_swapMsecAccum = 0.0;
 	return msec;
 }
 
-// time the last swap spent waiting (vblank or the frame rate lock); dynamic
-// resolution subtracts it to see how long the frame actually worked
-float GLimp_LastSwapWaitMsec( void ) {
-	return (float)s_lastSwapWaitMsec;
+// time the last frame waited (swap and r_fpsLock); dynamic resolution
+// subtracts it to see how long the frame actually worked
+float GLimp_LastFrameWaitMsec( void ) {
+	return (float)s_frameWaitMsec;
+}
+
+void Switch_PaceFrame( void ) {
+	static int loggedFps = -1;
+	const int lock = r_fpsLock.GetInteger();
+	const int fps = ( lock <= 0 ) ? 0 : ( lock >= 20 ? lock : 30 );
+	if ( fps != loggedFps ) {
+		loggedFps = fps;
+		if ( fps ) {
+			common->Printf( "frame rate locked at %d fps\n", fps );
+		} else {
+			common->Printf( "frame rate unlocked\n" );
+		}
+	}
+	if ( fps == 0 ) {
+		s_nextFrameTick = 0;
+		return;
+	}
+	const u64 period = armNsToTicks( 1000000000ULL / (u64)fps );
+	const u64 now = armGetSystemTick();
+	if ( s_nextFrameTick != 0 && now < s_nextFrameTick ) {
+		const u64 waitTicks = s_nextFrameTick - now;
+		svcSleepThread( (s64)armTicksToNs( waitTicks ) );
+		s_frameWaitMsec += armTicksToNs( waitTicks ) / 1000000.0;
+		s_nextFrameTick += period;
+	} else if ( s_nextFrameTick != 0 && now < s_nextFrameTick + period ) {
+		// a little late: keep the cadence
+		s_nextFrameTick += period;
+	} else {
+		// first frame, or a long one (a hitch, a map load): restart the cadence
+		s_nextFrameTick = now + period;
+	}
 }
 
 void GLimp_SwapBuffers( void ) {
-	if ( r_swapInterval.IsModified() || r_fpsLock.IsModified() ) {
+	if ( r_swapInterval.IsModified() ) {
 		r_swapInterval.ClearModified();
-		r_fpsLock.ClearModified();
 		GLimp_ApplySwapInterval();
 	}
 	const u64 start = armGetSystemTick();
-	if ( s_limiterFrameMsec > 0.0 ) {
-		const u64 period = armNsToTicks( (u64)( s_limiterFrameMsec * 1000000.0 ) );
-		if ( s_nextFrameTick != 0 && start < s_nextFrameTick ) {
-			svcSleepThread( (s64)armTicksToNs( s_nextFrameTick - start ) );
-			s_nextFrameTick += period;
-		} else if ( s_nextFrameTick != 0 && start < s_nextFrameTick + period ) {
-			// a little late: keep the cadence
-			s_nextFrameTick += period;
-		} else {
-			// first frame, or a long frame (loading): restart the cadence from now
-			s_nextFrameTick = start + period;
-		}
-	}
 	eglSwapBuffers( s_display, s_surface );
-	s_lastSwapWaitMsec = armTicksToNs( armGetSystemTick() - start ) / 1000000.0;
-	s_swapMsecAccum += s_lastSwapWaitMsec;
+	s_frameWaitMsec = armTicksToNs( armGetSystemTick() - start ) / 1000000.0;
+	s_swapMsecAccum += s_frameWaitMsec;
 }
 
 void GLimp_SetGamma( unsigned short red[256], unsigned short green[256], unsigned short blue[256] ) {

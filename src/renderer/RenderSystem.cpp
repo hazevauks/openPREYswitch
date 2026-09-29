@@ -78,13 +78,16 @@ so it stays sharp and keeps the UI viewport.
 With r_dynamicResolution the scale follows the frame time between
 r_dynamicResolutionMin and r_renderScale to hold r_dynamicResolutionFPS.
 GPU cost is roughly proportional to the pixel count, so the scale moves by the
-square root of the frame time ratio.
+square root of the frame time ratio. Scenes bound by per-draw CPU/driver cost do
+not get faster at a lower resolution (Switch log: 75-90 ms back end at both 100%
+and 50%), so every drop is checked after RENDERSCALE_TRIAL_MSEC and undone when
+frames did not get at least 5% faster.
 
 =====================================================================================
 */
 
 #ifdef __SWITCH__
-// Tegra X1: 3D fill rate is the bottleneck (hardware test: half the resolution ~doubled the frame rate).
+// Tegra X1: fill-rate-bound scenes (hardware test: half the resolution ~doubled the frame rate).
 #define RENDERSCALE_DYNAMIC_DEFAULT	"1"
 #else
 #define RENDERSCALE_DYNAMIC_DEFAULT	"0"
@@ -103,6 +106,12 @@ static float		renderScaleDynamic = 1.0f;
 static float		renderScaleAvgFrameMsec = 0.0f;
 static int			renderScaleLastFrameTime = 0;
 static int			renderScaleLastAdjustTime = 0;
+static float		renderScaleTrialFrom = 0.0f;	// > 0: scale before a drop that is being checked
+static float		renderScaleTrialMsec = 0.0f;	// average frame time before that drop
+static int			renderScaleTrialEnd = 0;
+static int			renderScaleNoDropUntil = 0;
+static const int	RENDERSCALE_TRIAL_MSEC = 1000;		// time for the average to settle after a drop
+static const int	RENDERSCALE_NO_DROP_MSEC = 10000;	// pause after a drop that did not help
 static bool			renderScaleActive = false;		// this frame's 3D is cropped
 static idGuiModel *	renderScaleGuiModel = NULL;
 
@@ -123,13 +132,14 @@ static float R_UpdateRenderScale( void ) {
 	// with r_fpsLock every frame lasts 33 ms however light it is; judge the
 	// resolution by the time the frame worked, not the time it waited to be shown
 	if ( frameMsec > 0 ) {
-		frameMsec = Max( 1, frameMsec - idMath::FtoiFast( GLimp_LastSwapWaitMsec() ) );
+		frameMsec = Max( 1, frameMsec - idMath::FtoiFast( GLimp_LastFrameWaitMsec() ) );
 	}
 #endif
 
 	if ( !r_dynamicResolution.GetBool() ) {
 		renderScaleDynamic = maxScale;
 		renderScaleAvgFrameMsec = 0.0f;
+		renderScaleTrialFrom = 0.0f;
 		return maxScale;
 	}
 
@@ -140,11 +150,27 @@ static float R_UpdateRenderScale( void ) {
 		renderScaleAvgFrameMsec = ( renderScaleAvgFrameMsec > 0.0f ) ? renderScaleAvgFrameMsec * 0.9f + frameMsec * 0.1f : (float)frameMsec;
 	}
 
+	// a lower resolution only helps while the GPU is the limit: after each drop, check
+	// that frames got faster, otherwise undo it and stop dropping for a while
+	if ( renderScaleTrialFrom > 0.0f && now >= renderScaleTrialEnd ) {
+		if ( renderScaleAvgFrameMsec > renderScaleTrialMsec * 0.95f ) {
+			renderScaleDynamic = renderScaleTrialFrom;
+			renderScaleNoDropUntil = now + RENDERSCALE_NO_DROP_MSEC;
+		}
+		renderScaleTrialFrom = 0.0f;
+	}
+
 	// aim 10% under the frame budget: a frame that runs over a locked 33 ms waits a whole extra vblank
 	const float targetMsec = 0.9f * 1000.0f / idMath::ClampInt( 15, 120, r_dynamicResolutionFPS.GetInteger() );
-	if ( renderScaleAvgFrameMsec > 0.0f && now - renderScaleLastAdjustTime >= 250 ) {
+	if ( renderScaleAvgFrameMsec > 0.0f && renderScaleTrialFrom == 0.0f && now - renderScaleLastAdjustTime >= 250 ) {
 		const float ratio = targetMsec / renderScaleAvgFrameMsec;
-		if ( ratio < 0.95f || ratio > 1.15f ) {
+		const bool drop = ratio < 0.95f && renderScaleDynamic > minScale && now >= renderScaleNoDropUntil;
+		if ( drop || ratio > 1.15f ) {
+			if ( drop ) {
+				renderScaleTrialFrom = renderScaleDynamic;
+				renderScaleTrialMsec = renderScaleAvgFrameMsec;
+				renderScaleTrialEnd = now + RENDERSCALE_TRIAL_MSEC;
+			}
 			// pixel count ~ GPU time: scale the side length by sqrt of the time ratio, halfway per step
 			const float desired = renderScaleDynamic * idMath::Sqrt( ratio );
 			renderScaleDynamic += ( desired - renderScaleDynamic ) * 0.5f;

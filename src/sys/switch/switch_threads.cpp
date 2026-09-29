@@ -179,14 +179,10 @@ Same 16 ms tick as src/sys/linux/main.cpp Sys_AsyncThread.
 static xthreadInfo		asyncThread;
 static volatile bool	s_asyncThreadExit = false;
 
-// Applications may use cores 0-2 (core 3 belongs to the system). Every libnx
-// thread starts on the process's default core, which the engine thread uses, so
-// the async tick (sound mixing, network) moves to its own core.
-static const s32 ASYNC_THREAD_CORE = 1;
+// the async tick (sound mixing, network) gets its own core; see core placement below
+static const int ASYNC_THREAD_CORE = 1;
 
 static void Switch_AsyncThread( void ) {
-	svcSetThreadCoreMask( threadGetCurHandle(), ASYNC_THREAD_CORE, 1u << ASYNC_THREAD_CORE );
-
 	int now = Sys_Milliseconds();
 	int ticked = now >> 4;
 
@@ -213,6 +209,7 @@ static void Switch_AsyncThread( void ) {
 void Switch_StartAsyncThread( void ) {
 	if ( asyncThread.threadHandle == 0 ) {
 		s_asyncThreadExit = false;
+		Switch_SetNextThreadCore( ASYNC_THREAD_CORE );
 		Sys_CreateThread( (xthread_t)Switch_AsyncThread, NULL, THREAD_NORMAL, asyncThread, "Async", g_threads, &g_thread_count );
 	} else {
 		common->Printf( "Async thread already running\n" );
@@ -256,7 +253,7 @@ The link wraps pthread_create (-Wl,--wrap=pthread_create, meson.build) so every
 thread, including those created inside static libraries, starts through a
 trampoline that moves it to its core first:
 	core 0	engine thread (Switch_SetNextThreadCore( 0 ) in main)
-	core 1	async tick (switch_threads.cpp moves itself there)
+	core 1	async tick (Switch_StartAsyncThread)
 	core 2	everything else (SWITCH_LIBRARY_THREAD_CORE)
 Applications may use cores 0-2; core 3 belongs to the system.
 =========================================================
@@ -264,7 +261,6 @@ Applications may use cores 0-2; core 3 belongs to the system.
 
 static const int	SWITCH_LIBRARY_THREAD_CORE = 2;
 static volatile int	s_nextThreadCore = -1;		// one-shot override, consumed by the next pthread_create
-static volatile int	s_threadsPlaced = 0;
 
 typedef struct {
 	void *	( *start )( void * );
@@ -299,16 +295,10 @@ extern "C" int __wrap_pthread_create( pthread_t *thread, const pthread_attr_t *a
 	const int result = __real_pthread_create( thread, attr, Switch_ThreadTrampoline, t );
 	if ( result != 0 ) {
 		free( t );
-	} else {
-		__atomic_add_fetch( &s_threadsPlaced, 1, __ATOMIC_SEQ_CST );
 	}
 	return result;
 }
 
 void Switch_SetNextThreadCore( int core ) {
 	__atomic_store_n( &s_nextThreadCore, core, __ATOMIC_SEQ_CST );
-}
-
-int Switch_ThreadsCreated( void ) {
-	return s_threadsPlaced;
 }

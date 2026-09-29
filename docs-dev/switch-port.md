@@ -15,9 +15,9 @@ in [switch-port-handbook.md](switch-port-handbook.md).
 | `idlib` | Compiles |
 | Game code (`src/game` + `src/Prey`, static library) | Compiles |
 | Engine sources (framework, renderer, sound, ui, ...) | Compile |
-| Platform layer `src/sys/switch/` | First version: files, time, threads, controller/touch input, EGL video. Networking is loopback only. |
+| Platform layer `src/sys/switch/` | Files, time, threads with core placement, controller/touch/gyro input, system keyboard, EGL video, clock profiles, crash reports. Networking is loopback only. |
 | GL loading (GLEW + generated GL 1.1 through `eglGetProcAddress`) | Done |
-| `OpenPrey.nro` | Boots on hardware, passes the intro cutscene and is playable. 10-15 fps at stock clocks, 30+ with the GPU at 921 MHz (before the post-processing defaults below). |
+| `OpenPrey.nro` | Playable on hardware: new game, save/load and exit work. Handheld, profile 3: ~30 fps in light scenes, ~9-10 fps in the heaviest (the bar full of NPCs). See Performance. |
 | OpenGL capability probe (`tools/switch/gltest`) | Passed on hardware: GL 4.3 compatibility profile (Mesa 20.1 nouveau), ARB programs, legacy GLSL, S3TC. Only `GL_EXT_texture_lod` (optional) is missing. |
 
 ## Toolchain setup (Windows)
@@ -69,7 +69,7 @@ ninja -C builddir-switch-mesa26
 ```
 
 Status: not recommended yet (slower and with rendering glitches on hardware; see
-Next steps).
+Performance).
 
 This produces `OpenPrey-mesa-sdk.nro` (title "OpenPrey (Mesa SDK)"), which can sit
 next to `OpenPrey.nro`. Runtime switches for that Mesa (environment, set before
@@ -168,76 +168,135 @@ are supported.
 The yaw direction is confirmed on hardware (handheld); pitch follows the assumed
 x-right axis. `in_gyroDebug 1` prints raw values if a controller disagrees.
 
+## Performance
+
+Measured on hardware in handheld mode. Where a number moved, the latest one is
+given; the reasoning behind each setting is in the source comment next to it.
+
+### Settings
+
+| cvar | Switch default | What it does |
+|---|---|---|
+| `r_switchPerfProfile` | 3 | Clock profile, official handheld configurations: 0 = system default (GPU 307.2 MHz), 1 = GPU 384, 2 = GPU 460.8, 3 = GPU 460.8 + EMC 1600 + CPU 1224 MHz. Restored on exit. |
+| `r_fpsLock` | 30 | Holds frames 33.3 ms apart (0 = off). |
+| `r_dynamicResolution` | 1 | 3D resolution follows the frame time (`r_dynamicResolutionFPS` 30, `r_dynamicResolutionMin` 50, `r_renderScale` max). |
+| `image_compressTextures` | 1 | DXT5 diffuse/default, DXT1 specular (2 also normal maps). |
+| `r_ssao`, `r_bloom` | 0 | Full-screen passes the GPU cannot afford (`OPENPREY_POSTFX_DEFAULT`). |
+| `r_cacheProgramParms` | 1 | Skips ARB env parameter updates that do not change the value. |
+| `fs_cacheMissingDirs` | 1 | Skips lookups in search-path directories known to be missing. |
+| `fs_caseSensitiveOS` | 0 | The SD card is case insensitive. |
+
+### Clocks
+
+- **Profile 3** sets configuration 0x92220007 and raises the CPU to 1224 MHz
+  through clkrst (pcv before 8.0.0), the service sys-clk uses. The system puts
+  the CPU back to the configuration's rate when it re-applies one (loading boost,
+  dock change, sleep). The rate is therefore checked once a second and after
+  every loading boost. sys-clk overrides for this title would fight it.
+- **Map loads and `common->Init`** use the system FastLoad boost mode: CPU 1785 MHz,
+  GPU at its minimum.
+- **Applying a changed profile in game:** the new configuration is set, then the
+  CPU boost mode is cycled so the system re-applies it.
+
+### Threads
+
+libnx starts every thread on core 0. The link wraps `pthread_create`
+(`-Wl,--wrap=pthread_create`), so every thread, library ones included, goes to
+its own core:
+
+- core 0: the engine (game, render front end and back end);
+- core 1: the async tick;
+- core 2: everything else (OpenAL Soft mixer, the file system thread, ...).
+
+Before this change, core 0 was at 90-97% while cores 1-2 stayed under 10%.
+
+### Frame rate lock
+
+`Switch_PaceFrame` sleeps between main loop frames, never inside one. Two
+earlier designs failed on hardware:
+
+- **Swap interval 2** (EGL reports a huge maximum) froze the loading screen.
+- **Sleeping before each swap** made map loads crawl. The loading screen is
+  redrawn after nearly every file read (`idSessionLocal::PacifierUpdate`), so
+  each read waited up to 33 ms and a load took minutes at ~15% CPU.
+
+Dynamic resolution subtracts the swap and pacing wait (`GLimp_LastFrameWaitMsec`),
+so it judges the time a frame worked, and aims 10% under the frame budget.
+
+### Where the time goes
+
+`com_logPerf 1` logs one line per second:
+
+- game, render front end and back end, and swap wait;
+- draws, parameters skipped and vertex buffers created.
+
+`com_logHitches` (default 100 ms) breaks each slow frame into the same parts,
+plus its file reads.
+
+`r_perfGpuSync 1` is a diagnostic that waits for the GPU before each swap. It
+reports the wait, which splits the back end into CPU and GPU time.
+
+Findings, at GPU 460.8 MHz and EMC 1600 MHz:
+
+- **Game logic takes ~2-4 ms and the front end ~2-5 ms.** In the bar full of
+  NPCs (~2000 draws), game logic rises to 10-20 ms and the front end to ~10 ms.
+- **The render back end is 75-85% of the frame.**
+- **Some scenes are fill-rate bound.** Standing in the bathroom, half the
+  resolution doubled the frame rate. Status Monitor showed GPU 99% and ~15 GB/s
+  of RAM traffic there.
+- **Other scenes are bound by per-draw CPU/driver cost.** In the bar, the back
+  end stayed at 75-90 ms at both 100% and 50% 3D scale, about 40 µs per draw.
+  Dynamic resolution checks every drop and undoes it after a second when frames
+  did not get at least 5% faster, then waits 10 s before trying again.
+- **Ruled out:**
+  - ARB env parameter uploads: the cache skipped ~3-5k updates per frame with no
+    measurable change (22.8 vs 22.9 ms).
+  - Vertex buffer re-creation: modest, ~15-20 buffers and ~200 KB per frame.
+- **Suspect to test next: `r_useIndexBuffers`** (engine default 0). With 0, every
+  draw passes its indices from client memory, and nouveau copies them into the
+  command stream. This is per-draw CPU work that does not depend on the
+  resolution. The cvar applies live (index buffers are created as surfaces are
+  drawn), so it can be compared in game with `com_logPerf 1`.
+
+### Mesa 26 experiment
+
+[danfromtico/mesa-switch](https://github.com/danfromtico/mesa-switch) 26.2.2 NVC0 was
+tested on hardware. The GL probe passes (GL 4.3 compatibility, ARB programs, S3TC).
+In game it was slower than devkitPro Mesa 20.1 (17-18 fps vs 21-22 at the same
+spot, full resolution) and showed rendering glitches. The build stays on
+devkitPro Mesa, and `-Dswitch_mesa_sdk` is kept for re-testing newer versions of
+that port. Its GL thread (`MESA_SWITCH_GLTHREAD=1`) moves driver work to another
+core, which targets the per-draw CPU cost. It was not measured separately.
+
+## Load time
+
+Loading game/roadhouse went from 118 s to ~50 s:
+
+- `fs_caseSensitiveOS` 0: with 1, every failed open also listed the directory.
+- No extra `stat()` per open.
+- `fs_cacheMissingDirs`: 13246 lookups skipped per load.
+- `image_compressTextures`: the generated/ `.bimage` cache was uncompressed
+  RGBA8 (`DeriveOpts`: "no need to compress"), 462 MB per map. With
+  compression it is 216 MB.
+
+`fs_profileLoads` (on by default on Switch) prints `fsLoadStats` after each load.
+It currently reports:
+
+- 1206 images in ~28 s;
+- 216 MB of SD reads in ~13 s;
+- 1469 opens in 4.4 s.
+
+The image cache regenerates once when `image_compressTextures` changes (it is
+keyed on the format), which takes minutes on the Switch CPU.
+
 ## Next steps
 
-0. Map load time: `fs_profileLoads` (on by default on Switch) prints file system
-   timings after each load (`fsLoadStats`). On Switch, `fs_caseSensitiveOS`
-   defaults to 0 (the SD card is case insensitive; with 1 every failed open also
-   listed the directory), the extra `stat()` per open is skipped, and
-   `fs_cacheMissingDirs` skips lookups in search-path directories known to be
-   missing (cleared on every write). Baseline before these changes: 72 s for
-   game/roadhouse, 44 s of it loading 1206 images.
-   With them: 59 s; 13246 lookups skipped by the cache; 462 MB read from the SD
-   card in 23 s, almost all of it generated/ .bimage files. Those were
-   uncompressed RGBA8 (`DeriveOpts`: "no need to compress"). On Switch,
-   `image_compressTextures` (default 1) stores diffuse/default as DXT5 and
-   specular as DXT1 (2 also compresses normal maps). This cuts load size and
-   GPU memory bandwidth. The cache regenerates once, because it is keyed on the
-   format. `com_logHitches` (ms, default 100) logs slow frames with the file
-   work done in them.
-0b. Clock profile: Status Monitor showed GPU 99% at 307.2 MHz (handheld default
-   PerformanceConfiguration 0x00020003) with game logic ~3 ms and swap wait
-   ~0.3 ms per 40-50 ms frame, so the game is GPU bound. `r_switchPerfProfile`
-   (default 3) selects an official handheld configuration: 1 = GPU 384 MHz,
-   2 = 460.8 MHz, 3 = 460.8 MHz + EMC 1600 MHz (0x92220007). The default
-   profile is restored on exit.
-   At 460.8 MHz the bottleneck moved to CPU core 0 (89-97%, cores 1-2 under 10%;
-   GPU 68-99%). libnx starts every thread on core 0, including the OpenAL Soft
-   mixer. The engine link wraps `pthread_create` (`-Wl,--wrap=pthread_create`)
-   so every thread starts through a trampoline in `switch_threads.cpp`: the engine
-   stays on core 0, the async tick on core 1, and all other threads (library ones
-   included) go to core 2. `com_logPerf` render front/back columns now use
-   clock-tick timers (`R_PerfTime`). Profile changes apply in game: the check
-   compares values and cycles the CPU boost mode so the system re-applies the
-   configuration.
-   With threads placed, `com_logPerf` showed the render back end at 75-85% of the
-   frame (23-38 ms standing, 80-95 ms while turning), with game logic ~3 ms and
-   front end ~2-5 ms: Mesa validates state and re-uploads program constants on
-   every draw. `r_cacheProgramParms` (default 1) skips ARB env parameter updates
-   that do not change the value; `com_logPerf` also reports draws and skipped
-   updates per frame. Hardware test: no measurable change (22.8 vs 22.9 ms back
-   end at 1160 draws), so constant uploads are not the cost. Standing still, the
-   back end time follows the resolution (half the resolution doubled the frame
-   rate) and Status Monitor shows GPU 99% and ~15 GB/s of RAM traffic, so fill
-   rate/bandwidth dominates. Turning the camera costs up to 4x the back end time
-   at a similar draw count, with repeated ~100 ms frames and no file reads.
-   Diagnostics for that: `com_logPerf` reports vertex cache `buffers` created per
-   frame (glBufferData on fresh storage; animated models re-create theirs every
-   frame), `temp` KB and `overflow` frames; `com_logHitches` breaks each slow
-   frame into game/front/back/swap and buffers; `r_perfGpuSync 1` (diagnostic)
-   waits for the GPU before each swap and reports that wait, splitting the back
-   end into CPU and GPU time.
-   `r_fpsLock` (default 30) paces frames 33.3 ms apart by sleeping before the
-   swap. The swap interval stays at `r_swapInterval` (0): EGL reports a huge
-   maximum interval, but swap interval 2 froze the loading screen on hardware.
-   Dynamic resolution subtracts the swap wait (including that sleep), so it
-   judges the time a frame worked, and aims 10% under the frame budget.
-   Hardware log in the bar with ~2000 draws: the back end stayed at 75-90 ms
-   whether the 3D scale was 100% or 50%, so that scene is bound by per-draw
-   CPU/driver cost, not fill rate; vertex buffer re-creation was modest
-   (~15-20 buffers, ~200 KB per frame). The structural next step is running the back
-   end on its own core (the vertex cache already has a CPU-memory mode for that).
-1. Performance on the Tegra X1. Hardware test at stock clocks: 22 fps at full
-   resolution, 43 fps at half (fill-rate bound; shadows cost ~10%). Dynamic
-   resolution is on by default on Switch: `r_dynamicResolution`,
-   `r_dynamicResolutionFPS` (30), `r_dynamicResolutionMin` (50), `r_renderScale`
-   (max, %). `com_showFPS 1` shows the 3D resolution in use. SSAO and bloom
-   default to off on Switch (`OPENPREY_POSTFX_DEFAULT`).
-2. Mesa 26 experiment (danfromtico/mesa-switch, 26.2.2 NVC0), tested on hardware:
-   the GL probe passes (GL 4.3 compatibility, ARB programs, S3TC), but in game it
-   was slower than devkitPro Mesa 20.1 (17-18 fps vs 21-22 at the same spot, full
-   resolution) and showed rendering glitches. The build stays on devkitPro Mesa;
-   `-Dswitch_mesa_sdk` is kept for re-testing newer versions of that port.
-   GLthread would not help here while GPU fill rate is the bottleneck.
-3. Audio: check which OpenAL Soft backend the devkitPro build uses.
-4. Multiplayer: real sockets in `switch_net.cpp`.
+1. **Per-draw cost:** measure `r_useIndexBuffers 1`. If it helps, make it the
+   Switch default. Existing configs saved the old value, so they need a
+   one-time migration like `in_switchControlScheme`.
+2. **Render back end on its own core** (SMP), so game + front end and back end
+   overlap instead of adding up. The vertex cache already has a CPU-memory mode
+   for that.
+3. **Loading:** fewer, larger reads for the image cache.
+4. **Audio:** check which OpenAL Soft backend the devkitPro build uses.
+5. **Multiplayer:** real sockets in `switch_net.cpp`.
