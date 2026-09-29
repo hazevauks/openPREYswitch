@@ -609,6 +609,18 @@ bool hhTrigger::IsEncroaching( const idEntity* entity ) {
 		if ( entity->GetPhysics()->ClipContents( GetPhysics()->GetClipModel() ) ) {
 			return( true );
 		}
+		// OpenPrey: same fallback as idEntity::TouchTriggers. The precise test can miss
+		// the player; TouchTriggers then still touches the trigger through its bounds
+		// test, but this check turned the touch down, so isSimpleBox 0 triggers never
+		// fired (roadhouse: rhGrandfatherHallwayTrigger, which starts Conversation1).
+		if ( entity->IsType( idPlayer::Type ) &&
+			GetPhysics()->GetAbsBounds().IntersectsBounds( entity->GetPhysics()->GetAbsBounds() ) ) {
+			if ( g_debugTriggers.GetBool() ) {
+				gameLocal.Printf( "%d: trigger '%s': precise test missed '%s', accepted by bounds\n",
+					gameLocal.framenum, GetName(), entity->GetName() );
+			}
+			return( true );
+		}
 	}
 
 	return false;
@@ -825,6 +837,11 @@ void hhTrigger::Event_Touch( idEntity *other, trace_t *trace ) {
 		return;
 	}
 
+	if ( g_debugTriggers.GetBool() && !IsActive() ) {
+		gameLocal.Printf( "%d: trigger '%s' touched by '%s'%s\n", gameLocal.framenum, GetName(),
+			other ? other->GetName() : "NULL", isSimpleBox ? "" : " (precise shape)" );
+	}
+
 	if( !IsActive() ) {
 		Activate( other );
 
@@ -884,6 +901,9 @@ void hhTrigger::Event_TriggerAction( idEntity *activator ) {
 	// Added noTouch && !IsEncroached to fix the issue with retriggered hurt constantly damaging the player, even when they weren't in it.
 	// nla - Added check to allow 'delayed' triggers to function when you weren't in them.
 	if (!noTouch && !IsEncroaching(activator) && !delay ) {
+		if ( g_debugTriggers.GetBool() ) {
+			gameLocal.Printf( "%d: trigger '%s' dropped: '%s' is not inside it\n", gameLocal.framenum, GetName(), activator->GetName() );
+		}
 		CancelEvents( &EV_Retrigger );
 		PostEventMS( &EV_Deactivate, 0 );
 		return;

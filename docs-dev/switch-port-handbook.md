@@ -30,25 +30,41 @@ daqui e a lição vai para a seção 5.
 - **O que funciona:** o espelho do banheiro ("What are you looking at?") e os
   comentários do Tommy ("Doesn't anyone ever clean this place?"). São gatilhos
   `trigger_multiple` de caixa simples. Portanto tocar gatilhos funciona.
-- **Suspeita principal:** o teste de "jogador dentro do gatilho" para gatilhos
-  com `isSimpleBox 0` (`hhTrigger::IsEncroaching` → `ClipContents`,
-  `src/Prey/game_trigger.cpp`). Se ele falhar, o gatilho se desativa sem
-  disparar. Esse é o único caminho que os gatilhos que funcionam não usam.
-- **Teste para isolar** (saia do banheiro sem `noclip`):
-  1. no console: `g_debugTriggers 1` e `developer 1`;
-  2. ande pelo corredor onde o avô deveria aparecer;
-  3. se nada acontecer, digite `trigger trigger_relay_5`. Isso força a conversa
-     direto;
+- **Causa provável (análise de código, 29/09):**
+  - **O plano B já existente:** o OpenPrey já tinha um plano B em
+    `idEntity::TouchTriggers` (`src/game/Entity.cpp`). Quando o teste preciso de
+    colisão (`ClipContents`) diz que o jogador não está no gatilho, ele confere
+    pelas caixas de contorno. É assim que os gatilhos são tocados.
+  - **Onde o gatilho do avô falha:** depois do toque, os gatilhos com
+    `isSimpleBox 0` confirmam em `hhTrigger::IsEncroaching`
+    (`src/Prey/game_trigger.cpp`) usando **só** o teste preciso. Se ele falha, o
+    gatilho se desliga sem disparar.
+  - **Por que os outros funcionam:** os gatilhos de caixa simples confirmam
+    pelas caixas.
+- **Correção na versão de 29/09 (a testar):**
+  - **Plano B:** `IsEncroaching` ganhou o mesmo plano B para o jogador.
+  - **Diagnóstico com `g_debugTriggers 1`:** o log passa a registrar cada
+    gatilho tocado, cada recusa ("dropped: ... is not inside it") e cada vez que
+    o plano B salvou o toque ("precise test missed ..., accepted by bounds").
+- **Teste** (saia do banheiro andando, sem `noclip`):
+  1. no console, `g_debugTriggers 1`;
+  2. ande pelo corredor até o avô;
+  3. se ele não falar, digite `trigger trigger_relay_5` (força a conversa);
   4. mande o log.
+- **Se o log mostrar "accepted by bounds" para `rhGrandfatherHallwayTrigger`:**
+  a causa está confirmada. O teste preciso de colisão falha, então vale
+  investigar por que ele falha, porque também é usado nas zonas de gravidade
+  (`game_zone.cpp`) das fases seguintes.
+- **Windows não serve para comparar neste PC:**
+  - a build de Windows do OpenPrey trava ao iniciar numa função de OpenGL que
+    o driver da Intel HD 4000 (de 2016) não tem;
+  - o áudio também exige o OpenAL Soft, porque a DLL que vem com a build é só
+    o roteador da Creative.
 
-  Leitura do resultado:
-  - **A conversa começa no passo 3:** o script está bom e o defeito é na
-    detecção do gatilho.
-  - **Não começa:** o defeito está no script ou nos personagens.
-- **Comparar com o Windows:** a mesma cena na versão de Windows diz se o
-  problema é do OpenPrey (vale para todas as plataformas) ou só do Switch.
-- **Estado em 29/09:** o teste acima ainda não foi feito. O último log era do
-  build Mesa 26, sem `g_debugTriggers`.
+  A cópia de teste está em `.tmp/win-test`, com o OpenAL Soft e o teste
+  automático `save/basepr/npctest.cfg`.
+- **A correção fica no código do jogo** (`src/Prey`): precisa ser levada para o
+  OpenPrey-GameLibs.
 - **Nunca use `noclip` para pular essa parte:** no noclip o jogador não toca
   gatilhos (`Player.cpp`: `if ( !noclip ... ) TouchTriggers()`).
 
