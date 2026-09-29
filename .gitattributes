@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# shell scripts and patches must keep LF endings to run/apply under MSYS2
+tools/switch/mesa20/*.sh text eol=lf
+tools/switch/mesa20/*.patch text eol=lf
