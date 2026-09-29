@@ -12,6 +12,91 @@ Documentação técnica do port (em inglês): [switch-port.md](switch-port.md).
 
 ---
 
+## 0. Problemas em aberto (leia primeiro)
+
+Atualizado a cada rodada de testes. Quando um problema for resolvido, ele sai
+daqui e a lição vai para a seção 5.
+
+### A conversa com o avô (Enisi) no corredor não começa
+
+- **Como deveria ser:** ao sair do banheiro, o avô aparece no corredor e diz
+  "Tommy". A conversa (`Conversation1`, em `script/map_roadhouse.script`)
+  destrava o resto do bar: Jen, os bêbados e a briga. Sem ela o jogo não avança.
+- **Cadeia no mapa:**
+  1. o gatilho `trigger_once` `rhGrandfatherHallwayTrigger` (com
+     `"isSimpleBox" "0"`: usa o formato exato do brush);
+  2. que aciona o `trigger_relay_5`;
+  3. que chama `map_roadhouse::Conversation1`.
+- **O que funciona:** o espelho do banheiro ("What are you looking at?") e os
+  comentários do Tommy ("Doesn't anyone ever clean this place?"). São gatilhos
+  `trigger_multiple` de caixa simples. Portanto tocar gatilhos funciona.
+- **Suspeita principal:** o teste de "jogador dentro do gatilho" para gatilhos
+  com `isSimpleBox 0` (`hhTrigger::IsEncroaching` → `ClipContents`,
+  `src/Prey/game_trigger.cpp`). Se ele falhar, o gatilho se desativa sem
+  disparar. Esse é o único caminho que os gatilhos que funcionam não usam.
+- **Teste para isolar** (saia do banheiro sem `noclip`):
+  1. no console: `g_debugTriggers 1` e `developer 1`;
+  2. ande pelo corredor onde o avô deveria aparecer;
+  3. se nada acontecer, digite `trigger trigger_relay_5`. Isso força a conversa
+     direto;
+  4. mande o log.
+
+  Leitura do resultado:
+  - **A conversa começa no passo 3:** o script está bom e o defeito é na
+    detecção do gatilho.
+  - **Não começa:** o defeito está no script ou nos personagens.
+- **Comparar com o Windows:** a mesma cena na versão de Windows diz se o
+  problema é do OpenPrey (vale para todas as plataformas) ou só do Switch.
+- **Nunca use `noclip` para pular essa parte:** no noclip o jogador não toca
+  gatilhos (`Player.cpp`: `if ( !noclip ... ) TouchTriggers()`).
+
+### Falhas gráficas no build Mesa 26 (`OpenPrey-mesa-sdk.nro`)
+
+- **Aparência (prints de 29/09, banheiro):**
+  - listras verticais pretas sobre paredes, pôsteres e espelho iluminados;
+  - áreas bem mais escuras que no Mesa padrão;
+  - na cena do espelho, uma faixa preta no topo e um pedaço da imagem
+    deslocado para a direita.
+- **Não acontece** no `OpenPrey.nro` (Mesa 20.1 do devkitPro). É um problema
+  do driver Mesa 26 (port danfromtico/StevensND, backend próprio para o
+  Horizon), ou da forma como o motor usa algum recurso que ele trata diferente.
+- **Desempenho:** com as threads distribuídas pelos núcleos, o Mesa 26 ficou
+  parecido com o Mesa 20.1 (~100 ms por quadro com ~2000 desenhos). Com a
+  thread de GL (`r_switchGLThread 1`) a impressão foi melhor, mas o log mostrou
+  pouca diferença (backend 74-79 ms com a thread, 76-86 ms sem).
+- **Teste para isolar** (Mesa 26, parado no banheiro, trocando um item por vez
+  e anotando se as listras somem):
+  1. `r_shadows 0` (sombras de stencil);
+  2. `r_skipSpecular 1`, depois `r_skipBump 1` (partes do cálculo de luz);
+  3. `r_dynamicResolution 0` e `r_renderScale 100` (cópia e ampliação da tela);
+  4. `r_switchGLThread 0` e `vid_restart` (a thread de GL);
+  5. `r_useIndexBuffers 1`.
+- **Se nada resolver:** atualizar o Mesa 26 para a versão mais nova do port e
+  testar de novo. O build padrão continua sendo o Mesa 20.1.
+
+### Clock da CPU (perfis 3 e 4) não fica aplicado
+
+- **Sintoma:** o log diz `CPU clock 1020 -> 1224 MHz: set`, mas o Status Monitor
+  mostra ~1015 MHz.
+- **Causa provável:** outro serviço desfaz o ajuste. Pode ser o sys-clk, se
+  houver uma regra dele para o título usado no title override ou uma regra
+  global. Pode ser também o próprio sistema, que aplica a configuração de
+  desempenho um instante depois do nosso ajuste.
+- **Diagnóstico nesta versão:** um segundo depois de aplicar o perfil (e depois
+  de cada carregamento), o jogo ajusta de novo e grava `CPU clock check: N MHz`
+  com o valor lido de volta.
+  - **Se aparecer 1224:** funcionou.
+  - **Se aparecer ~1020:** algo sobrescreve o ajuste. Desative as regras do
+    sys-clk para o título e teste de novo, ou use o próprio sys-clk para
+    definir o clock da CPU.
+
+### Zoom (D-pad para cima)
+
+- O código do Prey só aplica o zoom com uma arma na mão (seção 3). Conferir
+  quando houver arma.
+
+---
+
 ## 1. Regras que não mudam
 
 - **Nunca mexer** em `C:\Users\Usuario\Downloads\trabalho\openPREYwindows (NÃO MEXER)`.
@@ -208,9 +293,10 @@ A referência completa, em inglês, está na seção Performance de
   Zcull, render targets comprimidos nem o cache em tiles da GPU, e seu OpenGL
   pesa bem mais na CPU que o deko3d. Fontes na seção Performance de
   switch-port.md.
-- **Próximo teste:** Mesa 26 com a thread de GL no núcleo 2
-  (`r_switchGLThread`). O primeiro teste dele foi antes de distribuirmos as
-  threads pelos núcleos.
+- **Mesa 26 retestado (29/09):**
+  - com as threads nos núcleos certos, ficou parecido com o Mesa 20.1;
+  - a thread de GL ajudou pouco nos números;
+  - as falhas gráficas continuam (seção 0).
 - **Decisão:** trava em 30 fps, com CPU a 1224 MHz no perfil 3 para segurar um
   mínimo nas cenas pesadas.
 - **Expectativa realista:**
@@ -282,12 +368,10 @@ A ordem que funcionou aqui:
 
 ## 8. Pendências
 
-- Medir o build Mesa 26 com `r_switchGLThread` 1 e 0 (desempenho e falhas gráficas).
-- Medir perfil 3 contra perfil 4 (CPU 1224 contra 1785 MHz), com o sys-clk sem
-  regra para este título.
+- Os itens da seção 0: conversa do avô, falhas do Mesa 26 e clock da CPU.
+- Medir perfil 3 contra perfil 4 (CPU 1224 contra 1785 MHz) quando o clock
+  estiver aplicando (`CPU clock check` no log).
 - Backend numa thread própria (núcleo 2), atrás de uma cvar.
-- Confirmar que a CPU fica estável em 1224 MHz sem o sys-clk interferindo (a
-  trava de 30 fps já foi confirmada: carregamento em ~50 s).
 - Levar a correção de `Pvs.cpp` para o OpenPrey-GameLibs.
 - Tempo de carregamento: ~28 s ainda são imagens.
 - Áudio: confirmar qual backend o OpenAL Soft usa. Multiplayer: sockets de verdade.

@@ -194,9 +194,12 @@ given; the reasoning behind each setting is in the source comment next to it.
   sys-clk uses.
   - The rate is set when the profile is applied and again after every loading
     boost, which puts the CPU back to the configuration's rate.
-  - It is not re-checked periodically. A once-a-second check fought sys-clk on
-    hardware: the rate flipped between 1020 and 1224 MHz. A sys-clk setting for
-    this title now wins.
+  - One second later it is set once more, and the rate read back is logged
+    (`CPU clock check`). On hardware the log said "set" while Status Monitor
+    kept showing ~1015 MHz, so something else (sys-clk, the system) was
+    overriding it.
+  - It is not re-checked periodically. A once-a-second check fought sys-clk:
+    the rate flipped between 1020 and 1224 MHz.
 - **Map loads and `common->Init`** use the system FastLoad boost mode: CPU 1785 MHz,
   GPU at its minimum.
 - **Applying a changed profile in game:** the new configuration is set, then the
@@ -304,8 +307,19 @@ libdrm_nouveau), and its GLthread is on by default
 (`src/egl/drivers/switch/egl_switch.c`). GLthread records GL calls on the
 calling thread and runs the driver on another one. The test above ran before
 the `pthread_create` wrapper existed, so that driver thread shared core 0 with
-the engine and could only add overhead. It is worth measuring again:
-`r_switchGLThread` 0/1 and `vid_restart`. The port's source is at
+the engine and could only add overhead.
+
+Retest on 2026-09-29, after thread placement, at ~2000 draws:
+- about as fast as Mesa 20.1 (~100 ms frames);
+- the back end took 74-79 ms with GLthread and 76-86 ms without.
+
+The glitches remain:
+- vertical black stripes over lit walls, posters and the mirror;
+- much darker areas;
+- in the mirror scene, a black band at the top and part of the image shifted
+  to the right.
+
+The Portuguese handbook (section 0) lists the cvars to bisect them. The port's source is at
 [StevensND/mesa-switch](https://github.com/StevensND/mesa-switch), with forks by
 danfromtico and NaGaa95.
 
@@ -332,9 +346,8 @@ keyed on the format), which takes minutes on the Switch CPU.
 
 ## Next steps
 
-1. **Measure the Mesa 26 build again** with GLthread on core 2
-   (`r_switchGLThread` 1 vs 0), and check whether the rendering glitches depend
-   on it.
+1. **Mesa 26 glitches:** bisect them with the handbook's list, or update the
+   port. Its speed now matches Mesa 20.1.
 2. **Measure CPU scaling** with profile 3 vs 4 (1224 vs 1785 MHz), with sys-clk
    not overriding this title.
 3. **Render back end on its own core** (SMP), so game + front end and back end

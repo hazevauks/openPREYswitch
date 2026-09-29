@@ -381,10 +381,13 @@ profile 4 to 1785 MHz (the rate the system itself uses on loading screens;
 meant for measuring how much the CPU clock matters). The rate is set through
 clkrst (pcv before 8.0.0), the service sys-clk uses, when the profile is
 applied and again after every loading boost, which puts the CPU back to the
-configuration's rate. It is not re-checked periodically: with sys-clk running,
-both kept overriding each other (hardware test: the rate flipped between 1020
-and 1224 MHz). A sys-clk setting for this title therefore wins. Everything
-goes back to the defaults on exit.
+configuration's rate. The system applies a configuration change a moment after
+the request, so the rate is set once more a second later, and the rate read
+back is logged ("CPU clock check"): if it is not the profile's rate, something
+else (sys-clk, the system) owns the CPU clock. It is not re-checked
+periodically: with sys-clk running, a once-a-second check kept both overriding
+each other (hardware test: the rate flipped between 1020 and 1224 MHz).
+Everything goes back to the defaults on exit.
 
 Loading boost (Sys_SetLoadingBoost): the system FastLoad boost mode, the one
 retail games use on loading screens. It raises the CPU to 1785 MHz and drops
@@ -416,6 +419,7 @@ static const int NUM_PERF_PROFILES = sizeof( s_perfProfiles ) / sizeof( s_perfPr
 static int		s_loadingBoostDepth = 0;
 static int		s_appliedPerfProfile = -1;
 static bool		s_perfConfigChanged = false;	// handheld configuration differs from the default
+static int		s_cpuRecheckTime = 0;			// > 0: set the CPU rate once more and log it at this time
 
 // CPU clock through clkrst (8.0.0+) or pcv
 static bool				s_cpuClockOpen = false;
@@ -519,6 +523,7 @@ void Sys_SetLoadingBoost( bool enable ) {
 	} else if ( s_loadingBoostDepth > 0 && --s_loadingBoostDepth == 0 ) {
 		appletSetCpuBoostMode( ApmCpuBoostMode_Normal );
 		Switch_EnforceCpuClock( false );
+		s_cpuRecheckTime = Sys_Milliseconds() + 1000;
 	}
 }
 
@@ -542,12 +547,24 @@ void Switch_ApplyPerformanceProfile( void ) {
 		profile, s_perfProfiles[profile].config, R_SUCCEEDED( rc ) ? "set" : va( "failed (0x%X)", rc ), active );
 
 	Switch_EnforceCpuClock( true );
+	s_cpuRecheckTime = Sys_Milliseconds() + 1000;
 }
 
 void Switch_CheckPerformanceProfile( void ) {
 	// compare with the value applied instead of relying on the modified flag
 	if ( idMath::ClampInt( 0, NUM_PERF_PROFILES - 1, r_switchPerfProfile.GetInteger() ) != s_appliedPerfProfile ) {
 		Switch_ApplyPerformanceProfile();
+		return;
+	}
+	// one second after a change: the system has applied the configuration by now
+	if ( s_cpuRecheckTime > 0 && Sys_Milliseconds() >= s_cpuRecheckTime && s_loadingBoostDepth == 0 ) {
+		s_cpuRecheckTime = 0;
+		Switch_EnforceCpuClock( false );
+		if ( s_cpuClockOpen ) {
+			const u32 wanted = s_perfProfiles[s_appliedPerfProfile].cpuHz;
+			common->Printf( "CPU clock check: %u MHz (profile %d wants %s)\n", Switch_GetCpuHz() / 1000000,
+				s_appliedPerfProfile, wanted ? va( "%u MHz", wanted / 1000000 ) : "the configuration's rate" );
+		}
 	}
 }
 
