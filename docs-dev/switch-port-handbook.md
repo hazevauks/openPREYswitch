@@ -93,11 +93,16 @@ MSYSTEM=MSYS /c/Users/Usuario/Downloads/devkitPro/msys2/usr/bin/bash.exe -lc "cd
 - **Interagir** (apertar botões, usar telas) é o botão de ataque (ZR), como no
   Prey original: chegue perto e mire no alvo.
   - O zoom (D-pad para cima) só funciona com uma arma (`hhPlayer`, código do jogo).
-  - **Falar com NPCs no bar não funciona.** O código que trata a conversa
-    (`hhPlayer::Weapon_Combat`, `src/Prey/game_player.cpp`) roda depois de uma
-    saída antecipada quando as armas estão desativadas, como no bar. É código do
-    jogo: a correção pertence ao OpenPrey-GameLibs e deve ser conferida antes na
-    versão de Windows.
+  - **O Prey não tem botão para falar com NPCs.** As conversas do bar
+    (`script/map_roadhouse.script`) disparam sozinhas:
+    - ao passar por gatilhos invisíveis (`trigger_once`, por exemplo o
+      `Conversation2` no corredor);
+    - ao ficar a menos de 312 unidades do balcão (`WaitPlayerNearBar`).
+
+    Os comentários dos bêbados e da Jen também são gatilhos de toque.
+  - **Não use `noclip` em áreas com roteiro.** No noclip o jogador não toca
+    gatilhos (`if ( !noclip ... ) TouchTriggers()` em `Player.cpp`), então a
+    cena não avança. Carregue um save anterior e ande normalmente.
 - **Console do jogo:** o botão **−** abre e fecha; **A** abre o teclado do sistema.
 
 ## 4. Mapa do código do Switch
@@ -160,10 +165,17 @@ MSYSTEM=MSYS /c/Users/Usuario/Downloads/devkitPro/msys2/usr/bin/bash.exe -lc "cd
     de carregamento, com a CPU a ~15%. Swap interval 2 congelava a tela. A trava
     agora espera **entre** quadros do laço principal (`Switch_PaceFrame`), nunca
     dentro de um quadro. Regra geral: nada de dormir dentro do render.
-11. **Nem todo problema de controle é do port.** Interagir pelo botão de ataque,
-    o zoom que exige arma e a conversa com NPC ficam no código do jogo
-    (`src/Prey`), que é igual em todas as plataformas. Antes de "consertar" um
-    controle, confira na versão de Windows se o comportamento é o mesmo.
+11. **Nem todo problema de controle é do port.**
+    - Interagir pelo botão de ataque e o zoom que exige arma são regras do
+      jogo.
+    - As conversas com NPCs são gatilhos de roteiro, que o `noclip` desliga.
+
+    Antes de "consertar" um controle, leia o script do mapa (dentro dos pk4) e
+    confira na versão de Windows se o comportamento é o mesmo.
+12. **Brigar com o sys-clk.** Reaplicar o clock da CPU a cada segundo fazia o
+    valor oscilar no Status Monitor. O jogo agora só define o clock ao aplicar o
+    perfil e depois de cada carregamento. Um ajuste do sys-clk para este título
+    vence.
 
 ## 6. Desempenho: o que já sabemos
 
@@ -186,8 +198,19 @@ A referência completa, em inglês, está na seção Performance de
   - recriação de buffers de vértices (pequena);
   - Mesa 26 (mais lento e com falhas gráficas);
   - SaltyNX (trocado pelo monitor nativo).
-- **Próximo suspeito:** `r_useIndexBuffers 0`. Com 0, cada desenho copia os
-  índices para o fluxo de comandos da GPU. Testar com 1 durante o jogo.
+- **Medido com `r_perfGpuSync 1`, no bar:** ~25 ms de CPU e mais ~19-28 ms de
+  GPU por quadro. CPU e GPU estão, os dois, perto do limite de 33 ms.
+- **Clock da CPU ajuda pouco:** mesmo a ~2,4 GHz o fps quase não subiu. Os
+  núcleos 0 e 3 ficam ocupados e os núcleos 1-2 ficam ociosos. O núcleo 3 é do
+  sistema, onde roda o serviço do driver da GPU.
+- **Também descartados:** `r_useIndexBuffers 1` e swap interval 0/1.
+- **A pesquisa aponta o driver.** O nouveau (base do Mesa no Switch) não usa
+  Zcull, render targets comprimidos nem o cache em tiles da GPU, e seu OpenGL
+  pesa bem mais na CPU que o deko3d. Fontes na seção Performance de
+  switch-port.md.
+- **Próximo teste:** Mesa 26 com a thread de GL no núcleo 2
+  (`r_switchGLThread`). O primeiro teste dele foi antes de distribuirmos as
+  threads pelos núcleos.
 - **Decisão:** trava em 30 fps, com CPU a 1224 MHz no perfil 3 para segurar um
   mínimo nas cenas pesadas.
 - **Expectativa realista:**
@@ -208,8 +231,9 @@ A referência completa, em inglês, está na seção Performance de
 | `r_dynamicResolution` | 1 | Resolução dinâmica; testa cada redução e desfaz se não ajudou |
 | `r_dynamicResolutionMin` | 50 | Resolução mínima, em % |
 | `r_renderScale` | 100 | Resolução máxima, em % |
-| `r_switchPerfProfile` | 3 | 0 = padrão; 1 = GPU 384 MHz; 2 = GPU 460,8; 3 = GPU 460,8 + RAM 1600 + CPU 1224 |
-| `r_useIndexBuffers` | 0 | Índices em buffers da GPU: o próximo teste |
+| `r_switchPerfProfile` | 3 | 0 = padrão; 1 = GPU 384 MHz; 2 = GPU 460,8; 3 = GPU 460,8 + RAM 1600 + CPU 1224; 4 = como 3 com CPU 1785 (experimental) |
+| `r_switchGLThread` | 1 | Só no build Mesa 26: driver de GL numa thread própria (núcleo 2); vale após `vid_restart` |
+| `r_useIndexBuffers` | 0 | Testado: sem ganho no Switch |
 | `image_compressTextures` | 1 | Texturas DXT (2 inclui normal maps) |
 | `r_cacheProgramParms` | 1 | Cache de parâmetros (sem efeito medido) |
 | `in_gyro` | 1 | 0 = desligado; 1 = sempre; 2 = só mirando com ZL |
@@ -258,14 +282,12 @@ A ordem que funcionou aqui:
 
 ## 8. Pendências
 
-- Medir `r_useIndexBuffers 1`. Se ajudar, tornar padrão no Switch, com migração
-  única para configs antigos, como a do `in_switchControlScheme`.
+- Medir o build Mesa 26 com `r_switchGLThread` 1 e 0 (desempenho e falhas gráficas).
+- Medir perfil 3 contra perfil 4 (CPU 1224 contra 1785 MHz), com o sys-clk sem
+  regra para este título.
 - Backend numa thread própria (núcleo 2), atrás de uma cvar.
-- Confirmar no console:
-  - a CPU a 1224 MHz (linha `CPU clock` no log e no Status Monitor);
-  - a trava de 30 fps sem lentidão no carregamento.
-- Conversa com NPC no bar: confirmar na versão de Windows e corrigir no
-  OpenPrey-GameLibs (seção 3).
+- Confirmar que a CPU fica estável em 1224 MHz sem o sys-clk interferindo (a
+  trava de 30 fps já foi confirmada: carregamento em ~50 s).
 - Levar a correção de `Pvs.cpp` para o OpenPrey-GameLibs.
 - Tempo de carregamento: ~28 s ainda são imagens.
 - Áudio: confirmar qual backend o OpenAL Soft usa. Multiplayer: sockets de verdade.

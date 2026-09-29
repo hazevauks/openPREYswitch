@@ -177,7 +177,8 @@ given; the reasoning behind each setting is in the source comment next to it.
 
 | cvar | Switch default | What it does |
 |---|---|---|
-| `r_switchPerfProfile` | 3 | Clock profile, official handheld configurations: 0 = system default (GPU 307.2 MHz), 1 = GPU 384, 2 = GPU 460.8, 3 = GPU 460.8 + EMC 1600 + CPU 1224 MHz. Restored on exit. |
+| `r_switchPerfProfile` | 3 | Clock profile, official handheld configurations: 0 = system default (GPU 307.2 MHz), 1 = GPU 384, 2 = GPU 460.8, 3 = GPU 460.8 + EMC 1600 + CPU 1224 MHz, 4 = as 3 with CPU 1785 MHz (experimental). Restored on exit. |
+| `r_switchGLThread` | 1 | Mesa 26 build only: runs the GL driver on its own thread (core 2). Applies on `vid_restart`. |
 | `r_fpsLock` | 30 | Holds frames 33.3 ms apart (0 = off). |
 | `r_dynamicResolution` | 1 | 3D resolution follows the frame time (`r_dynamicResolutionFPS` 30, `r_dynamicResolutionMin` 50, `r_renderScale` max). |
 | `image_compressTextures` | 1 | DXT5 diffuse/default, DXT1 specular (2 also normal maps). |
@@ -188,11 +189,14 @@ given; the reasoning behind each setting is in the source comment next to it.
 
 ### Clocks
 
-- **Profile 3** sets configuration 0x92220007 and raises the CPU to 1224 MHz
-  through clkrst (pcv before 8.0.0), the service sys-clk uses. The system puts
-  the CPU back to the configuration's rate when it re-applies one (loading boost,
-  dock change, sleep). The rate is therefore checked once a second and after
-  every loading boost. sys-clk overrides for this title would fight it.
+- **Profiles 3 and 4** set configuration 0x92220007 and raise the CPU to
+  1224 MHz (3) or 1785 MHz (4) through clkrst (pcv before 8.0.0), the service
+  sys-clk uses.
+  - The rate is set when the profile is applied and again after every loading
+    boost, which puts the CPU back to the configuration's rate.
+  - It is not re-checked periodically. A once-a-second check fought sys-clk on
+    hardware: the rate flipped between 1020 and 1224 MHz. A sys-clk setting for
+    this title now wins.
 - **Map loads and `common->Init`** use the system FastLoad boost mode: CPU 1785 MHz,
   GPU at its minimum.
 - **Applying a changed profile in game:** the new configuration is set, then the
@@ -248,15 +252,44 @@ Findings, at GPU 460.8 MHz and EMC 1600 MHz:
   end stayed at 75-90 ms at both 100% and 50% 3D scale, about 40 µs per draw.
   Dynamic resolution checks every drop and undoes it after a second when frames
   did not get at least 5% faster, then waits 10 s before trying again.
+- **CPU and GPU time, measured with `r_perfGpuSync 1`** (bar area, ~1500 draws,
+  91% scale):
+  - the back end did ~25 ms of CPU work;
+  - the GPU still needed ~19-28 ms after that.
+
+  Without the sync, the back end took ~27 ms, so the GPU work overlaps the CPU
+  work. Both sides are near the 33 ms budget at GPU 460.8 MHz.
+- **Raising the CPU clock helped little.** With sys-clk at ~2.4 GHz, the frame
+  rate barely moved. Status Monitor showed cores 0 and 3 busy and cores 1-2
+  under 10%. Core 3 belongs to the system, which includes the GPU driver
+  service that handles Mesa's submissions.
 - **Ruled out:**
   - ARB env parameter uploads: the cache skipped ~3-5k updates per frame with no
     measurable change (22.8 vs 22.9 ms).
   - Vertex buffer re-creation: modest, ~15-20 buffers and ~200 KB per frame.
-- **Suspect to test next: `r_useIndexBuffers`** (engine default 0). With 0, every
-  draw passes its indices from client memory, and nouveau copies them into the
-  command stream. This is per-draw CPU work that does not depend on the
-  resolution. The cvar applies live (index buffers are created as surfaces are
-  drawn), so it can be compared in game with `com_logPerf 1`.
+  - `r_useIndexBuffers 1`: no change in the bar (back end 43-47 ms either way).
+    It created 30-60 more buffers per frame for animated models, which cancelled
+    any saving on indices.
+  - Swap interval 0 vs 1: no change.
+- **Research (see sources below)** points to the driver. nouveau, which the
+  Switch Mesa ports use, lacks several Maxwell features:
+  - Zcull (hierarchical depth/stencil rejection), which matters for Doom 3
+    style stencil shadow volumes;
+  - compressed render targets, which save bandwidth;
+  - the tiled cache;
+  - several shader compiler optimizations.
+
+  Its OpenGL path also has much higher CPU overhead than a low-level API. deko3d
+  has all of these. The official Doom 3 port (Panic Button, from the BFG
+  Edition) runs on Nintendo's NVN.
+
+Sources:
+
+- [deko3d README](https://github.com/devkitPro/deko3d/blob/master/README.md)
+- [dhewm3 Switch port](https://github.com/fgsfdsfgs/dhewm3), with its
+  [GameBrew notes](https://www.gamebrew.org/wiki/Dhewm3_Switch): 20-30 fps with
+  shadows off, less with shadows on
+- [Doom 3 (2019 version)](https://doomwiki.org/wiki/Doom_3_(2019_version))
 
 ### Mesa 26 experiment
 
@@ -264,9 +297,17 @@ Findings, at GPU 460.8 MHz and EMC 1600 MHz:
 tested on hardware. The GL probe passes (GL 4.3 compatibility, ARB programs, S3TC).
 In game it was slower than devkitPro Mesa 20.1 (17-18 fps vs 21-22 at the same
 spot, full resolution) and showed rendering glitches. The build stays on
-devkitPro Mesa, and `-Dswitch_mesa_sdk` is kept for re-testing newer versions of
-that port. Its GL thread (`MESA_SWITCH_GLTHREAD=1`) moves driver work to another
-core, which targets the per-draw CPU cost. It was not measured separately.
+devkitPro Mesa, and `-Dswitch_mesa_sdk` is kept for re-testing.
+
+That port submits through its own Horizon backend (syncpoints, no
+libdrm_nouveau), and its GLthread is on by default
+(`src/egl/drivers/switch/egl_switch.c`). GLthread records GL calls on the
+calling thread and runs the driver on another one. The test above ran before
+the `pthread_create` wrapper existed, so that driver thread shared core 0 with
+the engine and could only add overhead. It is worth measuring again:
+`r_switchGLThread` 0/1 and `vid_restart`. The port's source is at
+[StevensND/mesa-switch](https://github.com/StevensND/mesa-switch), with forks by
+danfromtico and NaGaa95.
 
 ## Load time
 
@@ -291,12 +332,17 @@ keyed on the format), which takes minutes on the Switch CPU.
 
 ## Next steps
 
-1. **Per-draw cost:** measure `r_useIndexBuffers 1`. If it helps, make it the
-   Switch default. Existing configs saved the old value, so they need a
-   one-time migration like `in_switchControlScheme`.
-2. **Render back end on its own core** (SMP), so game + front end and back end
+1. **Measure the Mesa 26 build again** with GLthread on core 2
+   (`r_switchGLThread` 1 vs 0), and check whether the rendering glitches depend
+   on it.
+2. **Measure CPU scaling** with profile 3 vs 4 (1224 vs 1785 MHz), with sys-clk
+   not overriding this title.
+3. **Render back end on its own core** (SMP), so game + front end and back end
    overlap instead of adding up. The vertex cache already has a CPU-memory mode
-   for that.
-3. **Loading:** fewer, larger reads for the image cache.
-4. **Audio:** check which OpenAL Soft backend the devkitPro build uses.
-5. **Multiplayer:** real sockets in `switch_net.cpp`.
+   for that. GLthread would cover part of this.
+4. **Native renderer (deko3d)**, only if the above cannot reach 30 fps. It is the
+   path to Zcull, compressed render targets and low CPU overhead, and a large
+   project.
+5. **Loading:** fewer, larger reads for the image cache.
+6. **Audio:** check which OpenAL Soft backend the devkitPro build uses.
+7. **Multiplayer:** real sockets in `switch_net.cpp`.

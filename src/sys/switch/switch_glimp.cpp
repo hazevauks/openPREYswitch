@@ -24,6 +24,9 @@ scaled by the system). r_mode/r_fullscreen are ignored.
 
 #include "switch_local.h"
 
+// newlib hides setenv() in strict C++ mode
+extern "C" int setenv( const char *name, const char *value, int overwrite );
+
 static const int SWITCH_SCREEN_WIDTH	= 1280;
 static const int SWITCH_SCREEN_HEIGHT	= 720;
 
@@ -32,6 +35,16 @@ static EGLContext	s_context = EGL_NO_CONTEXT;
 static EGLSurface	s_surface = EGL_NO_SURFACE;
 
 static EGLint	s_maxSwapInterval = 1;
+
+/*
+GLthread (Mesa 26 port only): Mesa records GL calls on the calling thread and
+runs the driver on its own thread, which the pthread_create wrapper places on
+core 2 (switch_threads.cpp). The engine thread then pays only for recording.
+The port enables it by default. The first Mesa 26 test ran before thread
+placement existed, so that thread shared core 0 with the engine. Applies at
+the next vid_restart.
+*/
+static idCVar r_switchGLThread( "r_switchGLThread", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "Mesa GLthread (Mesa 26 build only): run the GL driver on its own core; applies on vid_restart" );
 
 static void GLimp_ApplySwapInterval( void ) {
 	const int interval = idMath::ClampInt( 0, Max( 1, (int)s_maxSwapInterval ), r_swapInterval.GetInteger() );
@@ -62,6 +75,9 @@ GLimp_Init
 */
 bool GLimp_Init( glimpParms_t parms ) {
 	common->Printf( "Initializing OpenGL subsystem (Switch EGL)\n" );
+
+	// read by the Mesa 26 port (-Dswitch_mesa_sdk) at context creation; devkitPro Mesa ignores it
+	setenv( "MESA_SWITCH_GLTHREAD", r_switchGLThread.GetBool() ? "1" : "0", 1 );
 
 	s_display = eglGetDisplay( EGL_DEFAULT_DISPLAY );
 	if ( s_display == EGL_NO_DISPLAY || !eglInitialize( s_display, NULL, NULL ) ) {
@@ -124,6 +140,8 @@ bool GLimp_Init( glimpParms_t parms ) {
 		GLimp_DestroyEGL();
 		return false;
 	}
+	common->Printf( "GL: %s | %s | %s\n", (const char *)glGetString( GL_VENDOR ),
+		(const char *)glGetString( GL_RENDERER ), (const char *)glGetString( GL_VERSION ) );
 
 	if ( !eglGetConfigAttrib( s_display, config, EGL_MAX_SWAP_INTERVAL, &s_maxSwapInterval ) ) {
 		s_maxSwapInterval = 1;

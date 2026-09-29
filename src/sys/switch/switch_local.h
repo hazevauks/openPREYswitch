@@ -20,7 +20,7 @@ void		Switch_QueEvent( sysEventType_t type, int value, int value2, int ptrLength
 // CPU boost while loading (switch_main.cpp); calls nest.
 void		Sys_SetLoadingBoost( bool enable );
 // Clock profile (r_switchPerfProfile, switch_main.cpp). Check runs once per
-// Sys_GenerateEvents and re-applies the profile when the system changed it.
+// Sys_GenerateEvents and applies the profile when the cvar changed.
 void		Switch_ApplyPerformanceProfile( void );
 void		Switch_CheckPerformanceProfile( void );
 void		Switch_RestorePerformanceProfile( void );
