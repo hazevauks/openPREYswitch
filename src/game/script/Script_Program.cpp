@@ -1360,6 +1360,10 @@ idVarDef *idProgram::AllocDef( idTypeDef *type, const char *name, idVarDef *scop
 			def_z = AllocDef( type, element, scope, constant );
 			def_z->value.ptrOffset = def_x->value.ptrOffset + ( 2 * sizeof( float ) );
 		} else {
+			// stack vectors take exactly type->Size() bytes (E_EVENT_SIZEOF_VEC), as the
+			// caller pushes them (idInterpreter::PushVector) and as parmSize counts them
+			const int vectorStackOffset = ( scope->Type() == ev_function ) ? scope->value.functionPtr->locals : 0;
+
 			// make automatic defs for the vectors elements
 			// origin can be accessed as origin_x, origin_y, and origin_z
 			sprintf( element, "%s_x", def->Name() );
@@ -1375,6 +1379,14 @@ idVarDef *idProgram::AllocDef( idTypeDef *type, const char *name, idVarDef *scop
 			if ( scope->Type() == ev_function ) {
 				def_y->value.stackOffset = def_x->value.stackOffset + sizeof( float );
 				def_z->value.stackOffset = def_x->value.stackOffset + ( 2 * sizeof( float ) );
+				if ( type->Type() == ev_vector ) {
+					// OpenPrey 64-bit: each float element above reserved sizeof( intptr_t ) = 8
+					// bytes, 24 in all, while a pushed vector parameter takes 16. Every parameter
+					// after a vector was then read 8 bytes off (roadhouse: DistanceToXY( vector,
+					// vector ) returned garbage and the grandfather conversation never went on).
+					assert( def_x->value.stackOffset == vectorStackOffset );
+					scope->value.functionPtr->locals = vectorStackOffset + type->Size();
+				}
 			} else {
 				def_y->value.bytePtr = def_x->value.bytePtr + sizeof( float );
 				def_z->value.bytePtr = def_x->value.bytePtr + ( 2 * sizeof( float ) );

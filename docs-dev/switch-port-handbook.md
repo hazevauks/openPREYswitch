@@ -17,7 +17,7 @@ Technical reference for the port: [switch-port.md](switch-port.md).
 Updated after every test round. When an issue is solved, it leaves this
 section and the lesson goes to section 5.
 
-### The grandfather (Enisi) conversation in the hallway stalls
+### The grandfather (Enisi) conversation in the hallway stalls (fix to confirm)
 
 - **Expected:** after leaving the bathroom, the grandfather appears in the
   hallway and says "Tommy". Tommy answers ("Enisi? What are you doing
@@ -49,6 +49,30 @@ section and the lesson goes to section 5.
   If either one never holds, the conversation waits forever. Between 100 and
   375 units, the grandfather should also repeat call-out lines
   (`lotaa_callback_gf01..05`) every 10+ seconds.
+- **Cause found (2026-09-29, `g_debugPlayerCanSee` log):**
+  - **The trigger fires.** The log shows the precise test missing the player,
+    the bounds fallback accepting it, and `trigger_relay_5` activated by
+    `player1`.
+  - **The distance is fine.** The `waist` joint was at (6, -157) and the player
+    at (-37, -160), 43 units apart (the limit is 100).
+  - **`playerCanSee` was never called.** The script never reached it, because
+    `DistanceToXY( vector ent1, vector ent2 )` computed a wrong distance.
+  - **Why the distance was wrong:** this is a 64-bit bug in the script
+    compiler (`idProgram::AllocDef`, `src/game/script/Script_Program.cpp`).
+    - A vector parameter or local in a function reserved three float slots of
+      `sizeof( intptr_t )` = 8 bytes, 24 in all.
+    - The caller pushes a vector in `E_EVENT_SIZEOF_VEC` = 16 bytes, and
+      `parmSize` counts 16.
+    - So every parameter after a vector was read 8 bytes off: `ent2_x` read
+      the waist's z (44).
+  - **Scope:** this hits every script function that takes a vector followed by
+    other parameters, on every 64-bit build (the Windows x64 build included),
+    not only this scene.
+- **Fix (build of 2026-09-29, to be confirmed on hardware):**
+  - function-scope vectors now take exactly `type->Size()` bytes, with x/y/z
+    at +0/+4/+8;
+  - saves made with older builds hold script stacks in the old layout, so test
+    with a new game.
 - **Diagnostics in the next build:**
   - `g_debugPlayerCanSee 1` logs, at most once a second:
     - each `playerCanSee` result with its PVS, FOV and trace (fraction and
