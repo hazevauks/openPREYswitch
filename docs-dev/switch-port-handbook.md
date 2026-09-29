@@ -17,56 +17,70 @@ Technical reference for the port: [switch-port.md](switch-port.md).
 Updated after every test round. When an issue is solved, it leaves this
 section and the lesson goes to section 5.
 
-### The grandfather (Enisi) conversation in the hallway does not start
+### The grandfather (Enisi) conversation in the hallway stalls
 
 - **Expected:** after leaving the bathroom, the grandfather appears in the
-  hallway and says "Tommy". The conversation (`Conversation1`, in
-  `script/map_roadhouse.script`) unlocks the rest of the bar: Jen, the drunks
-  and the fight. Without it the game cannot progress.
+  hallway and says "Tommy". Tommy answers ("Enisi? What are you doing
+  here?...") and they talk (`Conversation1`, in
+  `script/map_roadhouse.script`). This unlocks the rest of the bar: Jen, the
+  drunks and the fight. Without it the game cannot progress.
 - **Chain in the map:**
   1. the `trigger_once` `rhGrandfatherHallwayTrigger` (with
      `"isSimpleBox" "0"`: it uses the exact brush shape);
-  2. which activates `trigger_relay_5`;
+  2. which activates `trigger_relay_5` (`notouch 1`, `wait -1`: fires once
+     only);
   3. which calls `map_roadhouse::Conversation1`.
-- **What works:** the bathroom mirror ("What are you looking at?") and Tommy's
-  remarks ("Doesn't anyone ever clean this place?"). Those are simple-box
-  `trigger_multiple` triggers, so touching triggers works.
-- **Likely cause (code analysis, 2026-09-29):**
-  - **The existing fallback:** OpenPrey already had a fallback in
-    `idEntity::TouchTriggers` (`src/game/Entity.cpp`). When the precise
-    collision test (`ClipContents`) says the player is not in the trigger, it
-    checks the bounding boxes instead. That is how triggers get touched.
-  - **Where the grandfather trigger fails:** after the touch, `isSimpleBox 0`
-    triggers confirm it in `hhTrigger::IsEncroaching`
-    (`src/Prey/game_trigger.cpp`) with the precise test **only**. If that test
-    fails, the trigger disables itself without firing.
-  - **Why the others work:** simple-box triggers confirm with the bounding
-    boxes.
-- **Fix in the 2026-09-29 build (to be tested):**
-  - **Fallback:** `IsEncroaching` got the same fallback for the player.
-  - **Diagnostics with `g_debugTriggers 1`:** the log records every trigger
-    touched, every rejection ("dropped: ... is not inside it") and every time
-    the fallback saved a touch ("precise test missed ..., accepted by bounds").
+- **Hardware result (2026-09-29, build with the trigger fallback):**
+  - the grandfather appears and says "Tommy", so the trigger fires and
+    `Conversation1` starts;
+  - nothing happens after that, even standing next to him;
+  - `trigger trigger_relay_5` does nothing, which is expected because the
+    relay already fired once.
+- **Where the script waits:** right after "Tommy", `Conversation1` calls
+  `WaitDistanceGFHallway( 1, 4, 1 )` → `WaitDistance`. That loop only returns
+  when both conditions hold:
+  1. **Distance:** the player is within 100 units (XY) of the grandfather's
+     `waist` joint (`getJointPos`).
+  2. **Visibility:** `$rhGrandfather.getHead().playerCanSee()` is true
+     (`idEntity::Event_PlayerCanSee`: player PVS, player FOV, then a trace from
+     the player's eye to the head origin that must reach the head or its bind
+     master).
+
+  If either one never holds, the conversation waits forever. Between 100 and
+  375 units, the grandfather should also repeat call-out lines
+  (`lotaa_callback_gf01..05`) every 10+ seconds.
+- **Diagnostics in the next build:**
+  - `g_debugPlayerCanSee 1` logs, at most once a second:
+    - each `playerCanSee` result with its PVS, FOV and trace (fraction and
+      entity hit);
+    - the head and master origins and the player's eye position;
+    - each `getJointPos` result next to the entity and player origins.
+  - `g_debugTriggers 1` logs trigger touches, rejections and the bounds
+    fallback.
 - **Test** (walk out of the bathroom, no `noclip`):
-  1. in the console, `g_debugTriggers 1`;
-  2. walk down the hallway to the grandfather;
-  3. if he does not speak, type `trigger trigger_relay_5` (forces the
-     conversation);
-  4. send the log.
-- **If the log shows "accepted by bounds" for `rhGrandfatherHallwayTrigger`:**
-  the cause is confirmed. The precise collision test fails, so it is worth
-  finding out why, because it is also used by the gravity zones
-  (`game_zone.cpp`) in later levels.
+  1. in the console: `g_debugPlayerCanSee 1` and `g_debugTriggers 1`;
+  2. walk to the grandfather and stand in front of him, looking at his face,
+     for about 10 seconds;
+  3. send the log.
+
+  Reading the result:
+  - the `getJointPos 'rhGrandfather' ... ('waist')` position is not where he
+    stands → the distance check is the problem;
+  - `playerCanSee` shows `PVS 0`, `FOV out` or a trace hitting another
+    entity → the visibility check is the problem.
+- **Earlier fix, kept:** `hhTrigger::IsEncroaching` now also accepts the
+  player by bounds, like `idEntity::TouchTriggers` already did. The precise
+  `ClipContents` test can miss the player.
 - **Windows cannot be used for comparison on this PC:**
-  - the OpenPrey Windows build stops at startup in an OpenGL function that the
-    Intel HD 4000 driver (from 2016) lacks;
+  - the OpenPrey Windows build stops at startup in an OpenGL function that
+    the Intel HD 4000 driver (from 2016) lacks;
   - audio also needs OpenAL Soft, because the DLL shipped with the build is
     only Creative's router.
 
   The test copy is in `.tmp/win-test`, with OpenAL Soft and the automated test
   `save/basepr/npctest.cfg`.
-- **The fix lives in game code** (`src/Prey`): it has to be carried over to
-  OpenPrey-GameLibs.
+- **These changes live in game code** (`src/Prey`, `src/game`): they have to
+  be carried over to OpenPrey-GameLibs.
 - **Never use `noclip` to skip this part:** in noclip the player does not
   touch triggers (`Player.cpp`: `if ( !noclip ... ) TouchTriggers()`).
 

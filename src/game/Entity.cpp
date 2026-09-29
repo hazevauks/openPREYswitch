@@ -6293,6 +6293,18 @@ void idAnimatedEntity::Event_GetJointPos( jointHandle_t jointnum ) {
 		gameLocal.Warning( "Joint # %d out of range on entity '%s'",  jointnum, name.c_str() );
 	}
 
+	// OpenPrey: scripted conversations measure the player's distance to this position
+	// (see g_debugPlayerCanSee in EntityAdditions.cpp)
+	extern idCVar g_debugPlayerCanSee;
+	static int lastPrintTime = -1000;
+	if ( g_debugPlayerCanSee.GetBool() && gameLocal.time - lastPrintTime >= 1000 ) {
+		lastPrintTime = gameLocal.time;
+		const idPlayer *player = gameLocal.GetLocalPlayer();
+		gameLocal.Printf( "getJointPos '%s' joint %d ('%s'): %s | entity origin %s | player origin %s\n",
+			name.c_str(), (int)jointnum, animator.GetJointName( jointnum ), offset.ToString( 0 ),
+			GetPhysics()->GetOrigin().ToString( 0 ), player ? player->GetPhysics()->GetOrigin().ToString( 0 ) : "-" );
+	}
+
 	idThread::ReturnVector( offset );
 }
 

@@ -1573,6 +1573,27 @@ void idEntity::Event_SetEntityKey( const char *key, const idEntity* value ) {
 // HUMANHEAD CJR
 //=============================================================================
 
+// OpenPrey: g_debugPlayerCanSee logs each test of the playerCanSee script event (at
+// most once a second), to find out why a scripted conversation waiting on it stalls
+// (roadhouse: the grandfather in the hallway, WaitDistanceGFHallway).
+idCVar g_debugPlayerCanSee( "g_debugPlayerCanSee", "0", CVAR_GAME | CVAR_BOOL, "log the tests of the playerCanSee script event (PVS, FOV, trace), once a second" );
+
+static void PlayerCanSee_DebugPrint( const idEntity *self, const hhPlayer *player, bool inPVS, int fov, const trace_t *trace, bool result ) {
+	static int lastPrintTime = -1000;
+	if ( !g_debugPlayerCanSee.GetBool() || gameLocal.time - lastPrintTime < 1000 ) {
+		return;
+	}
+	lastPrintTime = gameLocal.time;
+	const idEntity *master = self->GetBindMaster();
+	const idEntity *hit = trace ? gameLocal.GetTraceEntity( *trace ) : NULL;
+	gameLocal.Printf( "playerCanSee '%s' (master '%s' at %s): origin %s | PVS %d | FOV %s | trace %s (hit '%s') | player eye %s | result %d\n",
+		self->GetName(), master ? master->GetName() : "none", master ? master->GetOrigin().ToString( 0 ) : "-",
+		self->GetOrigin().ToString( 0 ), inPVS ? 1 : 0,
+		fov < 0 ? "-" : ( fov ? "in" : "out" ),
+		trace ? va( "%.2f", trace->fraction ) : "-", hit ? hit->GetName() : "none",
+		player ? player->GetEyePosition().ToString( 0 ) : "-", result ? 1 : 0 );
+}
+
 void idEntity::Event_PlayerCanSee() {
 	int			i;
 	idEntity	*ent;
@@ -1581,7 +1602,11 @@ void idEntity::Event_PlayerCanSee() {
 	idEntity	*selfCheck; // Is either the entity or the master
 
 	// Check if this entity is in the player's PVS
-	if ( gameLocal.InPlayerPVS( this ) ) {
+	const bool inPVS = gameLocal.InPlayerPVS( this );
+	if ( !inPVS ) {
+		PlayerCanSee_DebugPrint( this, NULL, false, -1, NULL, false );
+	}
+	if ( inPVS ) {
 		for ( i = 0; i < gameLocal.numClients ; i++ ) {
 			ent = gameLocal.entities[ i ];
 
@@ -1594,6 +1619,7 @@ void idEntity::Event_PlayerCanSee() {
 
 			// Check if the entity is in the player's FOV, based upon the "fov" key/value
 			if ( !player->CheckFOV( this->GetOrigin() ) ) {
+				PlayerCanSee_DebugPrint( this, player, true, 0, NULL, false );
 				continue;
 			}
 
@@ -1606,9 +1632,11 @@ void idEntity::Event_PlayerCanSee() {
 			// Check if a trace succeeds from the player to the entity
 			gameLocal.clip.TracePoint( traceInfo, player->GetEyePosition(), this->GetOrigin(), MASK_SHOT_RENDERMODEL, player );
 			if ( traceInfo.fraction >= 1.0f || ( gameLocal.GetTraceEntity( traceInfo ) == selfCheck ) ) {
+				PlayerCanSee_DebugPrint( this, player, true, 1, &traceInfo, true );
 				idThread::ReturnInt( true );
 				return;
 			}
+			PlayerCanSee_DebugPrint( this, player, true, 1, &traceInfo, false );
 		}
 	}
 
