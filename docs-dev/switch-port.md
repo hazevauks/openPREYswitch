@@ -4,7 +4,7 @@ Homebrew port of OpenPrey to the Nintendo Switch using devkitPro (devkitA64 + li
 Players supply their own retail Prey (2006) `.pk4` files; nothing from the game is
 distributed.
 
-Working handbook (Portuguese): rules, build/test loop, pitfalls and measurements
+Working handbook: open issues, rules, build/test loop, pitfalls and measurements
 in [switch-port-handbook.md](switch-port-handbook.md).
 
 ## Status
@@ -324,7 +324,7 @@ The glitches remain:
 - in the mirror scene, a black band at the top and part of the image shifted
   to the right.
 
-The Portuguese handbook (section 0) lists the cvars to bisect them. The port's source is at
+The handbook (section 0) lists the cvars to bisect them. The port's source is at
 [StevensND/mesa-switch](https://github.com/StevensND/mesa-switch), with forks by
 danfromtico and NaGaa95.
 
