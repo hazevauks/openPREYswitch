@@ -47,6 +47,8 @@ daqui e a lição vai para a seção 5.
   - **Não começa:** o defeito está no script ou nos personagens.
 - **Comparar com o Windows:** a mesma cena na versão de Windows diz se o
   problema é do OpenPrey (vale para todas as plataformas) ou só do Switch.
+- **Estado em 29/09:** o teste acima ainda não foi feito. O último log era do
+  build Mesa 26, sem `g_debugTriggers`.
 - **Nunca use `noclip` para pular essa parte:** no noclip o jogador não toca
   gatilhos (`Player.cpp`: `if ( !noclip ... ) TouchTriggers()`).
 
@@ -71,6 +73,11 @@ daqui e a lição vai para a seção 5.
   3. `r_dynamicResolution 0` e `r_renderScale 100` (cópia e ampliação da tela);
   4. `r_switchGLThread 0` e `vid_restart` (a thread de GL);
   5. `r_useIndexBuffers 1`.
+- **Resultado em 29/09:** as listras continuaram com `r_skipSpecular 1`,
+  `r_skipBump 1`, `r_dynamicResolution 0` + `r_renderScale 100`,
+  `r_switchGLThread 0` + `vid_restart` e `r_useIndexBuffers 1`. Esses ficam
+  descartados. **Falta testar `r_shadows 0`**: no teste foi digitado
+  `r_shadow`, sem o "s", e o console respondeu `Unknown command`.
 - **Se nada resolver:** atualizar o Mesa 26 para a versão mais nova do port e
   testar de novo. O build padrão continua sendo o Mesa 20.1.
 
@@ -89,6 +96,13 @@ daqui e a lição vai para a seção 5.
   - **Se aparecer ~1020:** algo sobrescreve o ajuste. Desative as regras do
     sys-clk para o título e teste de novo, ou use o próprio sys-clk para
     definir o clock da CPU.
+- **Resultado em 29/09 (perfil 4):** o log leu de volta `CPU clock check:
+  1785 MHz`, no início e depois do carregamento do mapa. Pelo serviço de clock,
+  o ajuste ficou.
+- **Falta confirmar:** se o Status Monitor mostra ~1785 MHz com esta versão.
+  O print anterior mostrava ~1015 MHz, mas era de uma versão sem essa
+  checagem. Se ele continuar mostrando ~1015, o valor aceito pelo serviço não
+  está chegando ao hardware, e o caminho é deixar o clock da CPU com o sys-clk.
 
 ### Zoom (D-pad para cima)
 
