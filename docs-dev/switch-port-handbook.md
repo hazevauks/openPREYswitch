@@ -17,96 +17,27 @@ Technical reference for the port: [switch-port.md](switch-port.md).
 Updated after every test round. When an issue is solved, it leaves this
 section and the lesson goes to section 5.
 
-### The grandfather (Enisi) conversation in the hallway stalls (fix to confirm)
+### Crash when the ship takes Tommy (end of game/roadhouse) (fix to confirm)
 
-- **Expected:** after leaving the bathroom, the grandfather appears in the
-  hallway and says "Tommy". Tommy answers ("Enisi? What are you doing
-  here?...") and they talk (`Conversation1`, in
-  `script/map_roadhouse.script`). This unlocks the rest of the bar: Jen, the
-  drunks and the fight. Without it the game cannot progress.
-- **Chain in the map:**
-  1. the `trigger_once` `rhGrandfatherHallwayTrigger` (with
-     `"isSimpleBox" "0"`: it uses the exact brush shape);
-  2. which activates `trigger_relay_5` (`notouch 1`, `wait -1`: fires once
-     only);
-  3. which calls `map_roadhouse::Conversation1`.
-- **Hardware result (2026-09-29, build with the trigger fallback):**
-  - the grandfather appears and says "Tommy", so the trigger fires and
-    `Conversation1` starts;
-  - nothing happens after that, even standing next to him;
-  - `trigger trigger_relay_5` does nothing, which is expected because the
-    relay already fired once.
-- **Where the script waits:** right after "Tommy", `Conversation1` calls
-  `WaitDistanceGFHallway( 1, 4, 1 )` → `WaitDistance`. That loop only returns
-  when both conditions hold:
-  1. **Distance:** the player is within 100 units (XY) of the grandfather's
-     `waist` joint (`getJointPos`).
-  2. **Visibility:** `$rhGrandfather.getHead().playerCanSee()` is true
-     (`idEntity::Event_PlayerCanSee`: player PVS, player FOV, then a trace from
-     the player's eye to the head origin that must reach the head or its bind
-     master).
-
-  If either one never holds, the conversation waits forever. Between 100 and
-  375 units, the grandfather should also repeat call-out lines
-  (`lotaa_callback_gf01..05`) every 10+ seconds.
-- **Cause found (2026-09-29, `g_debugPlayerCanSee` log):**
-  - **The trigger fires.** The log shows the precise test missing the player,
-    the bounds fallback accepting it, and `trigger_relay_5` activated by
-    `player1`.
-  - **The distance is fine.** The `waist` joint was at (6, -157) and the player
-    at (-37, -160), 43 units apart (the limit is 100).
-  - **`playerCanSee` was never called.** The script never reached it, because
-    `DistanceToXY( vector ent1, vector ent2 )` computed a wrong distance.
-  - **Why the distance was wrong:** this is a 64-bit bug in the script
-    compiler (`idProgram::AllocDef`, `src/game/script/Script_Program.cpp`).
-    - A vector parameter or local in a function reserved three float slots of
-      `sizeof( intptr_t )` = 8 bytes, 24 in all.
-    - The caller pushes a vector in `E_EVENT_SIZEOF_VEC` = 16 bytes, and
-      `parmSize` counts 16.
-    - So every parameter after a vector was read 8 bytes off: `ent2_x` read
-      the waist's z (44).
-  - **Scope:** this hits every script function that takes a vector followed by
-    other parameters, on every 64-bit build (the Windows x64 build included),
-    not only this scene.
-- **Fix (build of 2026-09-29, to be confirmed on hardware):**
-  - function-scope vectors now take exactly `type->Size()` bytes, with x/y/z
-    at +0/+4/+8;
-  - saves made with older builds hold script stacks in the old layout, so test
-    with a new game.
-- **Diagnostics in the next build:**
-  - `g_debugPlayerCanSee 1` logs, at most once a second:
-    - each `playerCanSee` result with its PVS, FOV and trace (fraction and
-      entity hit);
-    - the head and master origins and the player's eye position;
-    - each `getJointPos` result next to the entity and player origins.
-  - `g_debugTriggers 1` logs trigger touches, rejections and the bounds
-    fallback.
-- **Test** (walk out of the bathroom, no `noclip`):
-  1. in the console: `g_debugPlayerCanSee 1` and `g_debugTriggers 1`;
-  2. walk to the grandfather and stand in front of him, looking at his face,
-     for about 10 seconds;
-  3. send the log.
-
-  Reading the result:
-  - the `getJointPos 'rhGrandfather' ... ('waist')` position is not where he
-    stands → the distance check is the problem;
-  - `playerCanSee` shows `PVS 0`, `FOV out` or a trace hitting another
-    entity → the visibility check is the problem.
-- **Earlier fix, kept:** `hhTrigger::IsEncroaching` now also accepts the
-  player by bounds, like `idEntity::TouchTriggers` already did. The precise
-  `ClipContents` test can miss the player.
-- **Windows cannot be used for comparison on this PC:**
-  - the OpenPrey Windows build stops at startup in an OpenGL function that
-    the Intel HD 4000 driver (from 2016) lacks;
-  - audio also needs OpenAL Soft, because the DLL shipped with the build is
-    only Creative's router.
-
-  The test copy is in `.tmp/win-test`, with OpenAL Soft and the automated test
-  `save/basepr/npctest.cfg`.
-- **These changes live in game code** (`src/Prey`, `src/game`): they have to
-  be carried over to OpenPrey-GameLibs.
-- **Never use `noclip` to skip this part:** in noclip the player does not
-  touch triggers (`Player.cpp`: `if ( !noclip ... ) TouchTriggers()`).
+- **Symptom (2026-09-29):**
+  - the whole roadhouse now plays through (NPCs, bar fight);
+  - the game crashes when the ship abducts Tommy, the moment the next map
+    should load.
+- **Crash report:** a NULL read in `hhTarget_EndLevel::Event_Activate`
+  (`src/Prey/game_targets.cpp`), called from the map script through
+  `sys.trigger()` (`idThread::Event_Trigger`). The faulting instruction is the
+  `activator->IsType( hhPlayer::Type )` call, with `activator` = NULL.
+- **Cause:** OpenPrey changed `sys.trigger()` to activate with a NULL
+  activator (commit d3bab3d, together with a biolabs energy node fix). Retail
+  passed the local player. `hhTarget_EndLevel` dereferences the activator
+  without checking, so this crashes on every platform.
+- **Fix (build of 2026-09-29):**
+  - `hhTarget_EndLevel` and `hhTarget_ControlVehicle` (vehicle entry, also
+    reachable from scripts) fall back to the local player when the activator
+    is NULL;
+  - `sys.trigger()` itself keeps OpenPrey's NULL activator.
+- **Test:** load a save from the bar fight (saves made with the script VM fix
+  are fine) and let the ship take Tommy. The next map should load.
 
 ### Rendering glitches in the Mesa 26 build (`OpenPrey-mesa-sdk.nro`)
 
@@ -156,11 +87,16 @@ section and the lesson goes to section 5.
 - **Result on 2026-09-29 (profile 4):** the log read back `CPU clock check:
   1785 MHz`, at startup and after the map load. According to the clock
   service, the change stuck.
-- **Still to confirm:** whether Status Monitor shows ~1785 MHz with this build.
-  The earlier screenshot showed ~1015 MHz, but it came from a build without
-  this check. If it keeps showing ~1015, the rate the service accepts does not
-  reach the hardware, and the way forward is to leave the CPU clock to
-  sys-clk.
+- **Result on 2026-09-29 with Horizon-OC running:**
+  - the log read back 1224 MHz (profile 3) and 1785 MHz (profile 4) one second
+    after the change;
+  - the user saw no CPU increase.
+- **Conclusion:** Horizon-OC is built on sys-clk. Its sysmodule keeps applying
+  the clocks configured for the running title, so it undoes any change the
+  game makes. With Horizon-OC or sys-clk installed, set the CPU clock in its
+  per-title (or global) settings. Title override runs under the host game's
+  title ID, so the rule goes on that title. The in-game CPU rate only helps
+  on consoles without such a sysmodule.
 
 ### Zoom (D-pad up)
 
@@ -346,6 +282,29 @@ MSYSTEM=MSYS /c/Users/Usuario/Downloads/devkitPro/msys2/usr/bin/bash.exe -lc "cd
 13. **Building a 2020 Mesa with today's devkitPro:** Python 3.12 removed
     `distutils`, and the current newlib declares `timespec_get()` without
     implementing it. `tools/switch/mesa20` patches both.
+
+14. **64-bit script VM: vector parameters.** `idProgram::AllocDef` gave a
+    function-scope vector three 8-byte float slots (24 bytes), while callers
+    push 16 (`E_EVENT_SIZEOF_VEC`). Every parameter after a vector was read 8
+    bytes off.
+    - **What it broke:** the roadhouse script `DistanceToXY( vector, vector )`
+      returned garbage, so the grandfather conversation (`WaitDistance`) never
+      went on and the level could not be finished. Fixed in
+      `src/game/script/Script_Program.cpp`.
+    - **How it was found:** `g_debugPlayerCanSee` and `g_debugTriggers` (they
+      log the conditions scripted scenes wait on) showed that the trigger fired
+      and the distance was fine, but `playerCanSee` was never reached.
+    - **It is not Switch-specific:** it hits every 64-bit build, and every
+      script function taking a vector followed by other parameters.
+    - **Lesson:** when a scripted scene stalls, log what it waits on before
+      suspecting triggers or animation.
+15. **Precise trigger test.** `ClipContents` can miss the player.
+    `idEntity::TouchTriggers` already fell back to bounds, but
+    `hhTrigger::IsEncroaching` did not, so `isSimpleBox 0` triggers were
+    touched and then dropped. Both now accept the player by bounds.
+16. **`sys.trigger()` passes a NULL activator in OpenPrey.** Any target that
+    uses its activator must check it. `hhTarget_EndLevel` crashed at the end of
+    the roadhouse.
 
 ## 6. Performance: what is known
 
