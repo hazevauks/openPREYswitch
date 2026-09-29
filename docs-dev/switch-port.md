@@ -71,9 +71,14 @@ ninja -C builddir-switch-mesa26
 Status: not recommended yet (slower and with rendering glitches on hardware; see
 Performance).
 
-This produces `OpenPrey-mesa-sdk.nro` (title "OpenPrey (Mesa SDK)"), which can sit
-next to `OpenPrey.nro`. Runtime switches for that Mesa (environment, set before
-`eglInitialize`): `MESA_SWITCH_GL_DRIVER=zink|nvc0`, `MESA_SWITCH_GLTHREAD=0|1`.
+This produces `OpenPrey-mesa-sdk.nro` (title "OpenPrey (mesa-sdk)"), which can sit
+next to `OpenPrey.nro`. `-Dswitch_variant=<name>` picks another name. Runtime
+switches for that Mesa (environment, set before `eglInitialize`):
+`MESA_SWITCH_GL_DRIVER=zink|nvc0`, `MESA_SWITCH_GLTHREAD=0|1`.
+
+The same option takes devkitPro's Mesa 20.1 rebuilt from source
+([tools/switch/mesa20](../tools/switch/mesa20/README.md)). That is the base
+for driver changes, because the pacman package is binary only.
 
 ## Design decisions
 

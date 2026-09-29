@@ -52,5 +52,12 @@ option(
   'switch_mesa_sdk',
   type: 'string',
   value: '',
-  description: 'Nintendo Switch only: prefix of an alternative Mesa SDK (e.g. danfromtico/mesa-switch staged by build-opengl.sh, .../opt/devkitpro/portlibs/switch). Empty uses the devkitPro switch-mesa package.',
+  description: 'Nintendo Switch only: prefix of an alternative Mesa SDK (e.g. danfromtico/mesa-switch staged by build-opengl.sh, or tools/switch/mesa20/build.sh; .../opt/devkitpro/portlibs/switch). Empty uses the devkitPro switch-mesa package.',
+)
+
+option(
+  'switch_variant',
+  type: 'string',
+  value: '',
+  description: 'Nintendo Switch only: names the build OpenPrey-<variant>.nro, titled "OpenPrey (<variant>)", so several builds fit on one SD card. Defaults to mesa-sdk when switch_mesa_sdk is set.',
 )

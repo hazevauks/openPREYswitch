@@ -347,6 +347,26 @@ A referência completa, em inglês, está na seção Performance de
 
 Os prints do Status Monitor completam os dados.
 
+### Driver Mesa 20.1 compilado por nós
+
+O `OpenPrey.nro` usa o Mesa 20.1 do devkitPro (pacote `switch-mesa` 20.1.0-5).
+O pacman só entrega esse driver já compilado. Para poder modificá-lo, a
+receita oficial foi reproduzida em `tools/switch/mesa20/build.sh`, com
+instruções no `README.md` da pasta.
+
+- **O que o script faz:** baixa o código do Mesa e os patches do devkitPro,
+  confere os checksums, aplica dois patches nossos só de compatibilidade (sem
+  mudar o driver) e compila.
+- **Resultado:** fica em `.tmp/mesa20-build/mesa20-install/`. O Mesa instalado
+  no devkitPro não é tocado.
+- **Uso no OpenPrey:** uma pasta de build separada com
+  `-Dswitch_mesa_sdk=<essa pasta>/opt/devkitpro/portlibs/switch`.
+- **Uso em outro port do devkitPro:** apontar os `include/` e `lib/` dessa
+  pasta antes dos portlibs.
+- **Armadilha:** não exporte `MESON_RSP_THRESHOLD` ao compilar o Mesa. Sem os
+  "arquivos de resposta" do meson, juntar o `libEGL.a` estoura o limite de
+  linha de comando do Windows.
+
 ## 7. Roteiro para portar outro jogo (id Tech 4 ou parecido)
 
 A ordem que funcionou aqui:
