@@ -21,76 +21,61 @@ section and the lesson goes to section 5.
 
 - **The roadhouse plays through:** NPC conversations, the bar fight, and the
   abduction with its level change.
-- **game/feedingtowera loads and plays**, further in each round, until the
-  driver crash below.
+- **game/feedingtowera plays through** with no crash since vertex pages, and
+  **game/feedingtowerb** loads and plays (wall walking reached).
+- The user considers the port close to a first release. What is left is
+  optimization and quality of life.
 
-### Crash in the driver in game/feedingtowera, and stutters (fix to confirm)
+**Solved in the 2026-09-30 round** (lessons 17 and 18 in section 5):
 
-- **Symptoms:**
-  - two crashes during play in feedingtowera (2026-09-29 and 2026-09-30), the
-    second in another area of the map;
-  - with `r_shadows 1`, stutters when looking around;
-  - `r_shadows 0` makes the game much faster: back end 17-22 ms instead of
-    33-50 ms, 25-28 fps instead of 15-20.
-- **Crash reports:** corrupted slab pointers (`0x2000000020056a44`,
-  `0x6e400000000265d2`) read in `nouveau_bo_ref` inside Mesa's
-  `nouveau_mm_allocate`. The call chain is `R_AddModelSurfaces` →
-  `idVertexCache::Alloc` → `glBufferData` → `st_bufferobj_data` →
-  `nouveau_buffer_create`.
-- **Log:** 200-750 vertex cache buffers created per frame, 1-3 MB. The second
-  crash came right after a 1594-buffer frame, with `r_shadows 0` and
-  `r_reuseVertexStorage 1`. The roadhouse creates ~20.
-- **Cause (analysis):**
-  - every vertex cache block had its own GL buffer, so every allocation was a
-    `glBufferData`;
-  - in nouveau, each costs a suballocation, a staging copy and deferred frees
-    through fence callbacks;
-  - animated models re-create their vertex, shadow and index caches every
-    frame, and new areas add bursts of hundreds more;
-  - shadows add to the count, but they are not the root cause.
-- **First attempt (build of 2026-09-29):** `r_reuseVertexStorage` reused
-  same-size storage. It reused ~80% in steady frames but none in bursts, and
-  the crash came back. It was removed.
-- **Change (build of 2026-09-30): vertex pages** (`r_vertexPages 1`, the
-  default):
-  - blocks are carved out of shared 8 MB buffers and written through
-    unsynchronized maps, which cost no driver allocation;
-  - freed ranges wait for a GPU fence before reuse;
-  - the frame temp buffers are written the same way.
+- the driver crash in feedingtowera: vertex pages; every block paged in the
+  log, heap stable;
+- the savegame name keyboard: clicking the field opens it.
 
-  Details are in switch-port.md, "Vertex buffer churn, vertex pages and
-  shadows".
-- **Test** in feedingtowera, with `com_logPerf 1` and `r_shadows 1`:
-  1. play through the area where it crashed;
-  2. walk into new areas and look around;
-  3. send the log.
+### Slow loads (fix to confirm)
 
-  In `buffers N (K KB, P paged)`, P should equal N. Check whether the stutters
-  and the crash are gone. `heap N MB` should stay flat over time. For
-  comparison, `r_vertexPages 0` plus a restart brings the old path back.
+- **Cached loads:** feedingtowera from a save took 78.5 s. Of that, 45 s were
+  images, and 364 MB of OS reads took 21.6 s, about 17 MB/s.
+- **Cause:** newlib's 1 KB stdio buffer made each KB a separate file service
+  call.
+- **Change (build after 6524fe0):** a 64 KB buffer for every file the engine
+  opens, pk4s included.
+- **Test:** load the same save and compare `N images loaded in T seconds`,
+  `OS reads: N MB in T s` and the total `msec to load`.
+- **First visits** still compress textures: 70-100 s of images per new map.
+  The idea is to compress on cores 1-2.
+- **feedingtowerb's retail `.cm` is stale.** Rebuilding it cost 79 s once;
+  the rebuilt file is saved under `fs_savepath`.
 
-### Long first loads of new maps
+### Front end at 60-120 ms late in feedingtowerb (to measure)
 
-- **game/feedingtowera took 130 s the first time.** Of that, 100 s were images:
-  816 textures compressed to DXT and written to `generated/`.
-- **Later visits read the cache.** Roadhouse takes ~50 s with its cache.
-- **Idea:** compress on cores 1-2 while core 0 keeps loading (see
-  switch-port.md, Next steps).
+- **Symptom:** near the end of the 2026-09-30 log, 6-7 fps for over a minute
+  with shadows off:
+  - front end 60-120 ms, game 10-22 ms, back end ~20-35 ms;
+  - ~1100-2300 draws, only ~50-180 paged blocks per frame.
 
-### Savegame name keyboard (fix to confirm)
+  The GPU was not the limit.
+- **Change (diagnostics):** every `hitch` line is followed by `hitch front
+  end:`, which gives:
+  - the R_RenderView phases in ms: find (portals and culling), lights, models
+    (dynamic models and interactions), sort;
+  - views rendered (mirrors, portals and cameras count);
+  - visible entities and lights;
+  - md5 models generated, entity callbacks and interactions created.
+- **Test:** go back to that spot, then send the log and describe what is on
+  screen.
+- **Likely candidates:**
+  - many subviews (portals or mirrors);
+  - many animated models skinned on the CPU (the SIMD path is generic C, no
+    NEON);
+  - interaction creation.
 
-- **Test of 2026-09-29:** Y opened the keyboard, but the typed text was
-  appended to the default name instead of replacing it. Guessing the button was
-  also awkward.
-- **Cause:** `idEditWindow` only takes Backspace as a character event (what
-  Windows sends with the key). The Switch code posted it as a key event, which
-  the field ignores.
-- **Change (build of 2026-09-30):**
-  - clicking a text field (A, or a touch) opens the keyboard;
-  - Backspace is sent as a character, so the old text is erased;
-  - Y no longer does anything special in menus.
-- **Test:** in the save menu, click the name field with A, type a name, and
-  save.
+### Memory
+
+- **Heap in use:** 645 MB in the menu, ~2.0 GB in feedingtowera, 2.19-2.28 GB
+  in feedingtowerb, out of 3.19 GB.
+- It grows slowly within a map (~90 MB in ~15 min) and drops at map changes.
+- Watch it on long sessions before the release.
 
 ### LTO build (A/B test pending)
 

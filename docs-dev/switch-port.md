@@ -518,11 +518,32 @@ and written to `generated/`. File reads were only ~23 s of that. Later visits
 read the cache. Compressing on cores 1-2 while core 0 loads would shorten
 first visits.
 
+**Cached loads were still slow (2026-09-30 log).** Loading feedingtowera from
+a save, with its cache built, took 78.5 s:
+
+- 1503 images took 45 s;
+- 364 MB of OS reads took 21.6 s, about 17 MB/s.
+
+newlib gives every `FILE` a 1 KB stdio buffer, so each KB was a separate call
+into the system file service. Files the engine opens now get a 64 KB buffer
+(`SWITCH_STDIO_BUFFER_BYTES`, set in `OpenOSFile` and in `Unzip.cpp` for
+pk4s), which also covers writes to `generated/`. To confirm, compare the
+`OS reads: N MB in T s` line on the same load.
+
+**Stale collision files.** game/feedingtowerb printed
+`maps/game/feedingtowerb.cm is out of date` and rebuilt its collision model
+from the map: 79 s of a 175 s load. The rebuilt `.cm` is written under
+`fs_savepath`, which is searched before the pk4s, so this happens once per
+install. The retail `.cm` does not match its map; the desktop builds rebuild
+it too.
+
 ## Next steps
 
-1. **Vertex pages:** confirm on hardware that feedingtowera no longer crashes,
-   and compare `r_vertexPages` 1 vs 0 with shadows on (`com_logPerf`: buffers,
-   `paged`, front and back end, `heap`).
+1. **Front end in heavy scenes:** late feedingtowerb ran at 6-7 fps with a
+   60-120 ms front end. Read the `hitch front end:` lines from that spot, then
+   optimize what dominates: subviews, CPU skinning (NEON SIMD), or
+   interactions. Vertex pages were confirmed on hardware on 2026-09-30: no
+   crash, every block paged, heap stable.
 2. **Loading:** compress first-visit textures on cores 1-2.
 3. **Render back end on its own core** (SMP), so game + front end and back end
    overlap instead of adding up. The vertex cache already has a CPU-memory mode

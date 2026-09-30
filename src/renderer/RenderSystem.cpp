@@ -316,6 +316,8 @@ static void R_PerformanceCounters( void ) {
 		common->Printf( "lightScale: %f\n", backEnd.pc.maxLightValue );
 	}
 
+	R_AddFrontEndCounts( tr.pc );
+
 	memset( &tr.pc, 0, sizeof( tr.pc ) );
 	memset( &backEnd.pc, 0, sizeof( backEnd.pc ) );
 }

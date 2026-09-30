@@ -213,6 +213,24 @@ void R_AddVertexCachePerf( int bufferAllocs, int bufferPaged, int bufferAllocByt
 	perfCounters.frames++;
 }
 
+// R_RenderView
+void R_AddFrontEndPhaseTimes( double findSec, double lightSurfSec, double modelSurfSec, double sortSec ) {
+	perfCounters.findSec += findSec;
+	perfCounters.lightSurfSec += lightSurfSec;
+	perfCounters.modelSurfSec += modelSurfSec;
+	perfCounters.sortSec += sortSec;
+	perfCounters.views++;
+}
+
+// R_PerformanceCounters, before tr.pc is cleared
+void R_AddFrontEndCounts( const performanceCounters_t &pc ) {
+	perfCounters.viewEntities += pc.c_visibleViewEntities;
+	perfCounters.viewLights += pc.c_viewLights;
+	perfCounters.md5Generated += pc.c_generateMd5;
+	perfCounters.entityCallbacks += pc.c_entityDefCallbacks;
+	perfCounters.interactionsCreated += pc.c_createInteractions;
+}
+
 /*
 ====================
 GL_SelectTexture

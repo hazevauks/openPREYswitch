@@ -208,6 +208,18 @@ typedef struct rendererPerf_s {
 	int		tempBytes;			// frame temp vertex data
 	int		tempOverflows;		// frames whose temp data spilled into new buffers
 	int		frames;				// renderer frames (vertex cache EndFrame calls)
+
+	// front end breakdown (R_RenderView phases, summed over every view and subview)
+	double	findSec;			// FindViewLightsAndEntities: portal flow and culling
+	double	lightSurfSec;		// R_AddLightSurfaces: light shaders, prelight shadows
+	double	modelSurfSec;		// R_AddModelSurfaces: dynamic models, interactions
+	double	sortSec;			// R_SortDrawSurfs
+	int		views;				// views rendered, subviews (mirrors, portals, cameras) included
+	int		viewEntities;		// visible entities, summed over views
+	int		viewLights;
+	int		md5Generated;		// animated models re-instantiated
+	int		entityCallbacks;	// game callbacks that update entities while rendering
+	int		interactionsCreated;
 } rendererPerf_t;
 
 void	R_TakePerfCounters( rendererPerf_t &perf );

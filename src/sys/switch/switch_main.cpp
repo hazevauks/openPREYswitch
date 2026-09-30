@@ -726,6 +726,7 @@ Switch_ReportHitch
 Logs frames slower than com_logHitches ms with the file system work done in
 them, to tell stutters caused by SD card reads during play from GPU/CPU spikes
 (e.g. shader compiles). The file system counters run while fs_profileLoads is on.
+A second line splits the render front end into its R_RenderView phases.
 ================
 */
 static idCVar com_logHitches( "com_logHitches", "100", CVAR_SYSTEM | CVAR_INTEGER, "log frames slower than this many ms, with the file system work done in them (0 = off)", 0, 10000 );
@@ -756,6 +757,11 @@ static void Switch_ReportHitch( int frameMsec, int gameMsec, float swapMsec, con
 		frameMsec, gameMsec, perf.frontEndSec * 1000.0, perf.backEndSec * 1000.0, swapMsec,
 		perf.draws, perf.bufferAllocs, perf.bufferAllocBytes / 1024, perf.bufferPaged, files.c_str(),
 		cvarSystem->GetCVarInteger( "r_renderScaleCurrent" ) );
+	// where a slow front end went: R_RenderView phases over all views, and the work counts
+	common->Printf( "hitch front end: find %.1f lights %.1f models %.1f sort %.1f ms | %d views, %d entities, %d lights | %d md5 generated, %d entity callbacks, %d interactions created\n",
+		perf.findSec * 1000.0, perf.lightSurfSec * 1000.0, perf.modelSurfSec * 1000.0, perf.sortSec * 1000.0,
+		perf.views, perf.viewEntities, perf.viewLights,
+		perf.md5Generated, perf.entityCallbacks, perf.interactionsCreated );
 }
 
 /*

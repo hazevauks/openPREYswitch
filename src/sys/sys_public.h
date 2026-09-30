@@ -162,6 +162,11 @@ If you have questions concerning this license or the applicable additional terms
 #ifdef __SWITCH__
 
 #define	BUILD_STRING					"switch-arm64"
+
+// newlib's default stdio buffer is 1 KB, so each KB read or written was its own
+// call into the system file service (SD card reads ran at ~17 MB/s). Files the
+// engine opens get this buffer instead (FileSystem.cpp OpenOSFile, Unzip.cpp).
+#define SWITCH_STDIO_BUFFER_BYTES		( 64 * 1024 )
 #define BUILD_OS_ID						3
 #define CPUSTRING						"arm64"
 #define CPU_EASYARGS					0

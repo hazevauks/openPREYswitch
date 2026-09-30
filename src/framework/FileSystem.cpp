@@ -1316,6 +1316,11 @@ FILE *idFileSystemLocal::OpenOSFile( const char *fileName, const char *mode, idS
 #endif
 #endif
 	fp = fopen( fileName, mode );
+#ifdef __SWITCH__
+	if ( fp ) {
+		setvbuf( fp, NULL, _IOFBF, SWITCH_STDIO_BUFFER_BYTES );
+	}
+#endif
 
 	if ( openStart != 0.0 ) {
 		const double elapsed = FS_ProfileTime() - openStart;
