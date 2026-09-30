@@ -55,10 +55,33 @@ EXIT / ERROR
 ============================================================================
 */
 
+// libnx hands newlib's sbrk this range: every malloc, GPU buffers and textures included
+extern "C" char *fake_heap_start;
+extern "C" char *fake_heap_end;
+int R_VertexPageBytes( void );		// VertexCache.cpp
+
+/*
+================
+Switch_MemoryStatus
+
+One line on the heap, for the log around map loads and for fatal errors (an
+"Out of memory" says nothing about where the memory went otherwise).
+================
+*/
+static const char *Switch_MemoryStatus( void ) {
+	const struct mallinfo mi = mallinfo();
+	const size_t MB = 1024 * 1024;
+	return va( "heap %u MB in use, %u MB free inside it, %u of %u MB taken from the system; vertex pages %d MB",
+		(unsigned)( mi.uordblks / MB ), (unsigned)( mi.fordblks / MB ), (unsigned)( mi.arena / MB ),
+		(unsigned)( ( fake_heap_end - fake_heap_start ) / MB ), R_VertexPageBytes() / (int)MB );
+}
+
 static void Switch_WriteFatalFile( const char *msg ) {
 	FILE *f = fopen( SWITCH_BASE_PATH "/openprey_error.txt", "wb" );
 	if ( f ) {
 		fputs( msg, f );
+		fputc( '\n', f );
+		fputs( Switch_MemoryStatus(), f );
 		fputc( '\n', f );
 		fclose( f );
 	}
@@ -411,9 +434,15 @@ void Sys_SetLoadingBoost( bool enable ) {
 	if ( enable ) {
 		if ( s_loadingBoostDepth++ == 0 ) {
 			appletSetCpuBoostMode( ApmCpuBoostMode_FastLoad );
+			if ( common->IsInitialized() ) {
+				common->Printf( "memory before loading: %s\n", Switch_MemoryStatus() );
+			}
 		}
 	} else if ( s_loadingBoostDepth > 0 && --s_loadingBoostDepth == 0 ) {
 		appletSetCpuBoostMode( ApmCpuBoostMode_Normal );
+		if ( common->IsInitialized() ) {
+			common->Printf( "memory after loading: %s\n", Switch_MemoryStatus() );
+		}
 	}
 }
 

@@ -19,60 +19,64 @@ section and the lesson goes to section 5.
 
 **Story progress (2026-09-30):**
 
-- **The roadhouse plays through:** NPC conversations, the bar fight, and the
-  abduction with its level change.
-- **game/feedingtowera plays through** with no crash since vertex pages, and
-  **game/feedingtowerb** loads and plays (wall walking reached).
+- **A run from the start of the game** (build 09f2f4e, LTO) went through the
+  roadhouse and feedingtowera with a steady frame rate, above 30 fps even in
+  the bar. It ended loading the third area (feedingtowerb) with
+  "Out of memory" (below).
+- Earlier rounds reached feedingtowerb from a feedingtowera save
+  (wall walking).
 - The user considers the port close to a first release. What is left is
   optimization and quality of life.
 
-**Solved in the 2026-09-30 round** (lessons 17 and 18 in section 5):
+**Solved and confirmed on hardware (2026-09-30):**
 
-- the driver crash in feedingtowera: vertex pages; every block paged in the
-  log, heap stable;
-- the savegame name keyboard: clicking the field opens it.
+- the driver crash in feedingtowera: vertex pages (lesson 17);
+- the savegame name keyboard: clicking the field opens it (lesson 18);
+- the crash in a scripted teleport after loading a save: `sys.trigger()`
+  passes the local player again (lesson 16);
+- the settings menu (- button) and the console through it;
+- the LTO build: above 30 fps in the bar with shadows off and the CPU at
+  1224 MHz (Horizon-OC). LTO is the default (`b_lto` in the cross file).
 
-**Confirmed on hardware (2026-09-30):** the LTO build held 30 fps through the
-opening maps, with shadows off and the CPU at 1224 MHz (Horizon-OC), dipping
-to 25. The plain build dropped further. LTO is now the default
-(`b_lto` in the cross file).
+### Out of memory loading feedingtowerb after a run from the start (to measure)
 
-### Crash in a scripted teleport (fix to confirm)
+- **Error (build 09f2f4e):** `openprey_error.txt` said only "Out of memory".
+  It comes from idlib's `malloc` wrapper (`Heap.cpp`). No log came with it.
+- **What is known:**
+  - the heap is ~3.1 GB, shared with every GPU buffer and texture;
+  - the main menu already uses ~645 MB;
+  - a fresh process loading feedingtowera from a save used ~2.0 GB there, and
+    2.2-2.3 GB after moving on to feedingtowerb;
+  - this run carried roadhouse and feedingtowera before it, so something
+    probably stays behind across map loads.
+- **Candidates:**
+  - images loaded during play (`referencedOutsideLevelLoad`), which level
+    loads never purge;
+  - vertex pages, which are never freed and whose free ranges only serve
+    their own size class;
+  - the previous map's models and sounds, which are only purged at the end of
+    the next load, so both maps are resident at the peak;
+  - normal maps are uncompressed RGBA8 (`image_compressTextures 1`), four
+    times the size of DXT5.
+- **Change (diagnostics):**
+  - "Out of memory" now gives the size requested, and `openprey_error.txt`
+    adds a heap line;
+  - every load logs `memory before loading:` and `memory after loading:`
+    (heap in use, free inside it, taken from the system, vertex pages);
+  - it also logs `images: purged N (X MB), kept M loaded outside level loads
+    (Y MB)` and `N images resident, X MB`.
+- **Test:** play through map changes, ideally from the start again, and send
+  the log whether or not it fails. The numbers show which candidate grows.
+- **Workaround:** save near the end of feedingtowera, restart the game, load
+  the save, then go on. A fresh process got through before.
 
-- **Crash (2026-09-30, build 9592b60):** `far 0x0` in
-  `idPlayerStart::Event_TeleportPlayer`, called from `idThread::Event_Trigger`
-  (script `sys.trigger`), after loading the game.
-- **Cause:** upstream OpenPrey (`d3bab3d`) made `sys.trigger()` pass a NULL
-  activator. Prey's SDK and Doom 3 pass the local player, and the shipped
-  scripts were written for that. This is the third crash from it: level end,
-  vehicle target, teleport.
-- **Change:**
-  - in single player, `sys.trigger()` passes the local player again; in
-    multiplayer it stays NULL, as upstream intended;
-  - an audit of all 140 `EV_Activate` handlers found 4 that dereferenced the
-    activator unchecked (`idPlayerStart`, `idFuncRadioChatter`,
-    `idItemRemover`, `idTrigger_Timer`). They now handle NULL as well.
-  - This is game code: carry it over to OpenPrey-GameLibs.
-- **Test:** load the same save and play on from there.
+### PGO training run (retry)
 
-### Settings menu (to test)
-
-- **Asked by the user:** toggle fps, gyro, shadows and the like without typing
-  commands.
-- **Change:** **-** opens a settings overlay drawn by the engine
-  (`switch_settings.cpp`; switch-port.md, "Settings menu"). During play it
-  also opens the pause menu, so the game waits. Y inside it opens the console.
-- **Shadows are now off by default** on the Switch. Older configs get that
-  once through `com_switchSettings`.
-- **Test:**
-  - open it in game and in the main menu, and change every item;
-  - close it with B, - and +; the game should resume;
-  - Y should open the console;
-  - quit and restart; the choices should be kept.
-
-### PGO training run (to do)
-
-- **Asked by the user:** try profile-guided optimization on the LTO build.
+- **2026-09-30:** the first instrumented build crashed at startup, inside a
+  static constructor, in libgcov's indirect-call profiler (`gcov_topn_add_value`).
+  Value profiling keeps its state in thread-local variables. Both stages now
+  use `-fno-profile-values`, which records only branch and call counts, the
+  bulk of what PGO uses.
 - `OpenPrey-pgo.nro` is the instrumented build (`builddir-switch-pgo/`,
   `-Dswitch_pgo=generate`). It runs slower while it records.
 - **Run:**
@@ -121,13 +125,6 @@ to 25. The plain build dropped further. LTO is now the default
   - many animated models skinned on the CPU (the SIMD path is generic C, no
     NEON);
   - interaction creation.
-
-### Memory
-
-- **Heap in use:** 645 MB in the menu, ~2.0 GB in feedingtowera, 2.19-2.28 GB
-  in feedingtowerb, out of 3.19 GB.
-- It grows slowly within a map (~90 MB in ~15 min) and drops at map changes.
-- Watch it on long sessions before the release.
 
 ### Rendering glitches in the Mesa 26 build (parked)
 

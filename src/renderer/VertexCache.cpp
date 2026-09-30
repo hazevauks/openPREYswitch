@@ -103,6 +103,11 @@ static pageFence_t			s_pageFences[PAGE_MAX_FENCES];		// ring of fenced ranges, o
 static int					s_pageFenceHead;
 static int					s_pageFenceCount;
 
+// memory held by vertex pages, for platform memory reports
+int R_VertexPageBytes( void ) {
+	return s_pages.Num() * PAGE_BYTES;
+}
+
 /*
 ==============
 PageClass

@@ -30,12 +30,16 @@ if is_switch and switch_pgo != 'off'
   if cygpath.found()
     switch_pgo_prefix = run_command(cygpath, '-w', meson.global_build_root(), check: true).stdout().strip()
   endif
+  # Arc counts only: value profiling (indirect calls, top-N values) keeps its
+  # state in thread-local variables and crashed in static constructors on the
+  # Switch. Both stages must agree on it, or the counters would not match.
   if switch_pgo == 'generate'
     # instrumented build: each .gcda is written to the SD card at exit
     switch_pgo_args = [
       '-fprofile-generate=sdmc:/switch/openprey/pgo',
       '-fprofile-prefix-path=' + switch_pgo_prefix,
       '-fprofile-update=prefer-atomic',
+      '-fno-profile-values',
       '-DOPENPREY_PGO_GENERATE',
     ]
     # --wrap=fopen: see OPENPREY_PGO_GENERATE in src/sys/switch/switch_main.cpp
@@ -53,6 +57,7 @@ if is_switch and switch_pgo != 'off'
       '-fprofile-prefix-path=' + switch_pgo_prefix,
       '-fprofile-partial-training',
       '-fprofile-correction',
+      '-fno-profile-values',
       '-Wno-missing-profile',
     ]
     switch_pgo_link_args = switch_pgo_args
