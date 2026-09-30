@@ -555,6 +555,62 @@ The handbook (section 0) lists the cvars to bisect them. The port's source is at
 [StevensND/mesa-switch](https://github.com/StevensND/mesa-switch), with forks by
 danfromtico and NaGaa95.
 
+## Memory
+
+The libnx heap is ~3.1 GB (title override or forwarder). Every `malloc`, and
+every GPU buffer and texture (`libdrm_nouveau` allocates them with `memalign`),
+comes out of it. `openprey.log` reports it around each map load
+(`memory before loading:` / `memory after loading:`), with lines for images
+(`images: purged ... kept ...`, `N images resident`) and sounds
+(`sounds: released ...`, `sounds: N samples resident`). "Out of memory"
+errors give the size requested, and `openprey_error.txt` the heap at that
+moment.
+
+**Sounds were the largest user, and they were never released** (fixed
+2026-09-30):
+
+- **Decoding:** the BFG-style sound code decodes every sample to PCM when it
+  loads, music included, with no streaming. All of Prey's audio decodes to
+  ~2.7 GB, 2.2 GB of it music. The largest track,
+  `music/score/spindle_b1_action`, is 123 MB of PCM.
+- **Two copies:** each decoded sample was kept twice, once in the engine and
+  once in OpenAL (`alBufferData` copies the data). The engine copy is now
+  freed after the upload. Voices only play the OpenAL buffer and use the
+  sample counts, which are kept.
+- **Never released:** `idSoundSystemLocal::LoadSample` marked every sample
+  never-purge; the level-based condition was commented out. Each map's music,
+  voices and ambience stayed after the map was left, and a run from the start
+  ran out of memory loading the third map.
+  - Now only samples referenced before the first map load (menus) stay.
+  - `BeginLevelLoad` releases the rest, except the ones still playing (the
+    loading music starts before it).
+- **Reloading:** a released sample comes back when:
+  - `LoadSample` is called for it again;
+  - the loading level looks up its sound shader
+    (`idDeclManagerLocal::FindType` → `idSoundShader::ReloadPurgedSamples`),
+    which covers the sounds a map precaches;
+  - it plays (`idSoundEmitterLocal::StartSound`), for anything a level did
+    not precache. That costs a decode on the game thread the first time.
+- **Other users:**
+  - textures, ~350 MB per map at most (a cached load of feedingtowera reads
+    364 MB, all files included);
+  - models, collision, AAS, scripts;
+  - the heap fragmentation large decodes cause.
+
+**Savegame restore left garbage in render entities** (fixed 2026-09-30):
+
+- **Cause:** `renderEntity_t` / `renderLight_t` carry fields from the Raven
+  lineage that Prey savegames do not store (`overlayShader`,
+  `suppressSurfaceMask`, `weaponDepthHackInViewID`, `globalLight`...).
+  `hhGameLocal::Restore` re-creates the static render entities with a plain
+  `new`, so those fields held whatever was in that memory.
+- **Symptoms after loading a save:**
+  - `overlayShader` pointing at a real material drew models a second time with
+    a random material: graphical errors and a slower frame;
+  - a pointer that was not a material crashed `R_GlobalShaderOverride`.
+- **Fix:** `ReadRenderEntity` and `ReadRenderLight` now set those fields as
+  spawning does, and the static entities are cleared before reading.
+
 ## Load time
 
 Loading game/roadhouse went from 118 s to ~50 s:

@@ -118,6 +118,8 @@ void Sys_Quit( void ) {
 	Switch_Exit( EXIT_SUCCESS );
 }
 
+static bool s_fatalFileWritten = false;	// by Sys_SetFatalError, with the heap at the time
+
 void Sys_Error( const char *error, ... ) {
 	char text[4096];
 	va_list argptr;
@@ -127,7 +129,11 @@ void Sys_Error( const char *error, ... ) {
 	va_end( argptr );
 
 	Sys_Printf( "Sys_Error: %s\n", text );
-	Switch_WriteFatalFile( text );
+	// after a FatalError the file already holds the message and the heap as it was
+	// when the error happened; after the shutdown that follows it says little
+	if ( !s_fatalFileWritten ) {
+		Switch_WriteFatalFile( text );
+	}
 	Switch_Exit( EXIT_FAILURE );
 }
 
@@ -142,6 +148,7 @@ engine can crash during that shutdown and the message would be lost.
 */
 void Sys_SetFatalError( const char *error ) {
 	Switch_WriteFatalFile( error );
+	s_fatalFileWritten = true;
 }
 
 /*
@@ -965,6 +972,11 @@ int main( int argc, char **argv ) {
 
 	mkdir( SWITCH_BASE_PATH, 0777 );
 	chdir( SWITCH_BASE_PATH );
+
+	// keep the last session's log: a crash or fatal error gets reported after the
+	// game was started again, which used to overwrite it
+	remove( SWITCH_BASE_PATH "/basepr/logs/openprey-previous.log" );
+	rename( SWITCH_BASE_PATH "/basepr/logs/openprey.log", SWITCH_BASE_PATH "/basepr/logs/openprey-previous.log" );
 #ifdef OPENPREY_PGO_GENERATE
 	mkdir( SWITCH_PGO_PATH, 0777 );		// libgcov does not create directories here
 #endif

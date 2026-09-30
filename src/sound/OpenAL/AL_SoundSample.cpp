@@ -334,6 +334,20 @@ void idSoundSample_OpenAL::LoadResource()
 			// upload PCM data to OpenAL
 			CreateOpenALBuffer();
 
+			// OpenPrey: alBufferData copies the data into OpenAL's own storage, and
+			// voices play that buffer (idSoundVoice_OpenAL::SubmitBuffer). The decoded
+			// copy kept here doubled the memory of every sound: Prey decodes to about
+			// 2.7 GB of PCM, 2.2 GB of it music. Keep only the buffer sizes and sample
+			// counts, which voices use to position playback.
+			if( openalBuffer != 0 )
+			{
+				for( int j = 0; j < buffers.Num(); j++ )
+				{
+					FreeBuffer( buffers[j].buffer );
+					buffers[j].buffer = NULL;
+				}
+			}
+
 			return;
 		}
 	}

@@ -1217,6 +1217,9 @@ void hhGameLocal::Restore( idRestoreGame *savefile ) {
 	staticRenderEntities.SetNum( num );
 	for( i = 0; i < num; i++ ) {
 		renderEnt = new renderEntity_t;
+		// OpenPrey: cleared like at spawn (ParseSpawnArgsToRenderEntity); the savegame
+		// does not carry every field
+		memset( renderEnt, 0, sizeof( *renderEnt ) );
 		savefile->ReadRenderEntity( *renderEnt );
 		gameRenderWorld->AddEntityDef( renderEnt );
 		staticRenderEntities[i] = renderEnt;

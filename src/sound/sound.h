@@ -205,6 +205,11 @@ public:
 	virtual const char* 	GetSound( int index ) const;
 	virtual float			GetTimeLength() const;
 
+	// OpenPrey: loads the samples a level change released (idSoundSystemLocal::
+	// BeginLevelLoad). Called by the decl manager when a loading level looks the
+	// shader up. Non-virtual, so the class layout the game module sees is unchanged.
+	void					ReloadPurgedSamples() const;
+
 private:
 	friend class idSoundWorldLocal;
 	friend class idSoundEmitterLocal;

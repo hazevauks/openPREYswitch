@@ -2127,6 +2127,9 @@ bool idProgram::Restore( idRestoreGame *savefile ) {
 	checksum = CalculateChecksum();
 
 	if ( saved_checksum != checksum ) {
+		// OpenPrey: say why a savegame restarts its map instead of loading
+		gameLocal.Warning( "savegame script checksum 0x%08x does not match the compiled scripts (0x%08x, %d statements); restarting the map",
+			saved_checksum, checksum, statements.Num() );
 		result = false;
 	}
 

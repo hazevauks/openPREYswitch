@@ -1641,6 +1641,12 @@ const idDecl *idDeclManagerLocal::FindType( declType_t type, const char *name, b
 	decl->everReferenced = true;
 	if ( insideLevelLoad ) {
 		decl->parsedOutsideLevelLoad = false;
+
+		// OpenPrey: a level change released the sound samples; the ones this
+		// level precaches come back while it loads (see idSoundSystemLocal::BeginLevelLoad)
+		if ( type == DECL_SOUND ) {
+			static_cast<const idSoundShader *>( decl->self )->ReloadPurgedSamples();
+		}
 	}
 
 	return decl->self;

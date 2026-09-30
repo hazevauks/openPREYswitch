@@ -646,22 +646,23 @@ idSoundSample* idSoundSystemLocal::LoadSample( const char* name )
 		if( idStr::Cmp( samples[i]->GetName(), canonical ) == 0 )
 		{
 			samples[i]->SetLevelLoadReferenced();
+			// OpenPrey: released by a level change (BeginLevelLoad), needed again
+			ReloadPurgedSample( samples[i] );
 			return samples[i];
 		}
 	}
 	idSoundSample* sample = new idSoundSample;
 	sample->SetName( canonical );
 	sampleHash.Add( hashKey, samples.Append( sample ) );
-	//if( !insideLevelLoad )
-	//{
-		// Sound sample referenced before any map is loaded
+	// OpenPrey: only sounds referenced before the first level load (menus) stay for
+	// good. Marking every sample never-purge kept each map's music, voices and
+	// ambience after the map was left, until the heap ran out on the third map.
+	if( !levelLoadsBegun )
+	{
 		sample->SetNeverPurge();
-		sample->LoadResource();
-	//}
-	//else
-	//{
-		sample->SetLevelLoadReferenced();
-	//}
+	}
+	sample->LoadResource();
+	sample->SetLevelLoadReferenced();
 
 	if( cvarSystem->GetCVarBool( "fs_buildgame" ) )
 	{
@@ -707,6 +708,54 @@ void idSoundSystemLocal::StopVoicesWithSample( const idSoundSample* const sample
 
 /*
 ========================
+idSoundSystemLocal::SampleIsPlaying
+========================
+*/
+bool idSoundSystemLocal::SampleIsPlaying( const idSoundSample* sample ) const
+{
+	for( int w = 0; w < soundWorlds.Num(); w++ )
+	{
+		const idSoundWorldLocal* sw = soundWorlds[w];
+		if( sw == NULL )
+		{
+			continue;
+		}
+		for( int e = 0; e < sw->emitters.Num(); e++ )
+		{
+			const idSoundEmitterLocal* emitter = sw->emitters[e];
+			if( emitter == NULL )
+			{
+				continue;
+			}
+			for( int i = 0; i < emitter->channels.Num(); i++ )
+			{
+				if( emitter->channels[i]->leadinSample == sample || emitter->channels[i]->loopingSample == sample )
+				{
+					return true;
+				}
+			}
+		}
+	}
+	return false;
+}
+
+/*
+========================
+idSoundSystemLocal::ReloadPurgedSample
+
+Game thread only (it reads files).
+========================
+*/
+void idSoundSystemLocal::ReloadPurgedSample( idSoundSample* sample )
+{
+	if( sample != NULL && !sample->IsLoaded() )
+	{
+		sample->LoadResource();
+	}
+}
+
+/*
+========================
 idSoundSystemLocal::FreeVoice
 ========================
 */
@@ -727,15 +776,25 @@ idSoundSystemLocal::BeginLevelLoad
 void idSoundSystemLocal::BeginLevelLoad()
 {
 	insideLevelLoad = true;
+	levelLoadsBegun = true;
+
+	// OpenPrey: release the previous level's samples before the new one loads;
+	// the ones it needs come back as it references them (ReloadPurgedSample).
+	// Playing samples stay: the loading music starts before this.
+	int releasedCount = 0;
+	int64_t releasedBytes = 0;
 	for( int i = 0; i < samples.Num(); i++ )
 	{
-		if( samples[i]->GetNeverPurge() )
+		samples[i]->ResetLevelLoadReferenced();
+		if( samples[i]->GetNeverPurge() || !samples[i]->IsLoaded() || SampleIsPlaying( samples[i] ) )
 		{
 			continue;
 		}
+		releasedCount++;
+		releasedBytes += samples[i]->BufferSize();
 		samples[i]->FreeData();
-		samples[i]->ResetLevelLoadReferenced();
 	}
+	common->Printf( "sounds: released %d samples (%d MB)\n", releasedCount, ( int )( releasedBytes >> 20 ) );
 }
 
 /*
@@ -747,6 +806,19 @@ void idSoundSystemLocal::EndLevelLoad()
 {
 
 	insideLevelLoad = false;
+
+	// OpenPrey: resident sound memory (OpenAL's copy of the PCM data)
+	int residentCount = 0;
+	int64_t residentBytes = 0;
+	for( int i = 0; i < samples.Num(); i++ )
+	{
+		if( samples[i]->IsLoaded() )
+		{
+			residentCount++;
+			residentBytes += samples[i]->BufferSize();
+		}
+	}
+	common->Printf( "sounds: %d samples resident (%d MB)\n", residentCount, ( int )( residentBytes >> 20 ) );
 /*
 	common->Printf( "----- idSoundSystemLocal::EndLevelLoad -----\n" );
 	int		start = Sys_Milliseconds();

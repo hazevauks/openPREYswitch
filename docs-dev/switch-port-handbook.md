@@ -38,37 +38,50 @@ section and the lesson goes to section 5.
 - the LTO build: above 30 fps in the bar with shadows off and the CPU at
   1224 MHz (Horizon-OC). LTO is the default (`b_lto` in the cross file).
 
-### Out of memory loading feedingtowerb after a run from the start (to measure)
+### Out of memory on the third map, graphics errors and crashes after loading saves (fixes to confirm)
 
-- **Error (build 09f2f4e):** `openprey_error.txt` said only "Out of memory".
-  It comes from idlib's `malloc` wrapper (`Heap.cpp`). No log came with it.
-- **What is known:**
-  - the heap is ~3.1 GB, shared with every GPU buffer and texture;
-  - the main menu already uses ~645 MB;
-  - a fresh process loading feedingtowera from a save used ~2.0 GB there, and
-    2.2-2.3 GB after moving on to feedingtowerb;
-  - this run carried roadhouse and feedingtowera before it, so something
-    probably stays behind across map loads.
-- **Candidates:**
-  - images loaded during play (`referencedOutsideLevelLoad`), which level
-    loads never purge;
-  - vertex pages, which are never freed and whose free ranges only serve
-    their own size class;
-  - the previous map's models and sounds, which are only purged at the end of
-    the next load, so both maps are resident at the peak;
-  - normal maps are uncompressed RGBA8 (`image_compressTextures 1`), four
-    times the size of DXT5.
-- **Change (diagnostics):**
-  - "Out of memory" now gives the size requested, and `openprey_error.txt`
-    adds a heap line;
-  - every load logs `memory before loading:` and `memory after loading:`
-    (heap in use, free inside it, taken from the system, vertex pages);
-  - it also logs `images: purged N (X MB), kept M loaded outside level loads
-    (Y MB)` and `N images resident, X MB`.
-- **Test:** play through map changes, ideally from the start again, and send
-  the log whether or not it fails. The numbers show which candidate grows.
-- **Workaround:** save near the end of feedingtowera, restart the game, load
-  the save, then go on. A fresh process got through before.
+- **Reports (2026-10-01, build 7b7bc42):**
+  - "Out of memory (17711349 bytes requested)" loading feedingtowerb in a run
+    from the start. The heap had taken 3110 of its 3115 MB from the system;
+    the 31 MB "in use" in the file was measured after the shutdown.
+  - A crash loading a save: the savegame's script checksum did not match, and
+    the rejected load deleted objects that were only constructed
+    (`hhWeaponRifle::~hhWeaponRifle` → `ZoomOut` on members `Spawn` sets).
+  - A crash in `R_GlobalShaderOverride`: `renderEntity.overlayShader` was
+    0x30.
+  - Graphics errors from the middle of the second area (Sphaira forwarder),
+    and a slower frame than the previous build.
+- **Causes found:**
+  1. **Sounds** were decoded to PCM, kept twice (engine and OpenAL), and never
+     released (everything never-purge). Prey's audio decodes to ~2.7 GB, 2.2
+     GB of it music. Each map piled up on the last (switch-port.md,
+     "Memory").
+  2. **Savegame restore** re-created static render entities with a plain
+     `new`. Fields the save does not carry (`overlayShader`, masks,
+     `globalLight`...) held garbage: models drawn twice with random
+     materials, and the crash when the pointer was invalid. That explains the
+     graphics errors and part of the slowdown after loading.
+  3. **Rejected savegames** crashed instead of restarting the map.
+- **Changes:**
+  - sounds: the engine's PCM copy is freed after the upload to OpenAL;
+    `BeginLevelLoad` releases the last level's samples (except menu sounds and
+    what is playing); they come back when the new level looks up their
+    shaders or plays them;
+  - restore: `ReadRenderEntity` / `ReadRenderLight` set the unsaved fields,
+    and static render entities are cleared first;
+  - a rejected save no longer deletes the half-built objects (they leak once)
+    and logs the checksums; the session restarts the map with the player's
+    persistent data, as the engine intended;
+  - the log of the previous session is kept as
+    `basepr/logs/openprey-previous.log`, and `openprey_error.txt` keeps the heap
+    as it was at a FatalError.
+- **Test:**
+  1. play from a save through two or three map changes;
+  2. check that music and sounds play normally after each change;
+  3. send `openprey.log`. The `sounds: released` and `memory before/after
+     loading` lines should show the memory going back down at each change.
+  - After loading a save, the graphics should be clean and the frame rate
+    as good as in a fresh run.
 
 ### PGO training run (retry)
 
@@ -211,8 +224,11 @@ MSYSTEM=MSYS /c/Users/Usuario/Downloads/devkitPro/msys2/usr/bin/bash.exe -lc "cd
   - `basepr/`: the OpenPrey overlay (includes
     `materials/renderscale_openprey.mtr`, needed for dynamic resolution)
 - **Files to send after each test:**
-  - `base/logs/openprey.log`: written line by line, so the last line is the
+  - `basepr/logs/openprey.log`: written line by line, so the last line is the
     last event before a hang.
+  - `basepr/logs/openprey-previous.log`: the session before the current one.
+    Starting the game renames the last log to this, so a crash or error can be
+    reported after restarting.
   - `openprey_error.txt`: fatal error message.
   - `openprey_crash.txt`: CPU exception (PC, LR, backtrace).
   - Atmosphère reports (`atmosphere/crash_reports/`), when the system shows an
@@ -363,6 +379,18 @@ MSYSTEM=MSYS /c/Users/Usuario/Downloads/devkitPro/msys2/usr/bin/bash.exe -lc "cd
     feature that is on screen (shadows here).
 18. **GUI text fields take Backspace as a character.** `idEditWindow` handles
     Backspace in its `SE_CHAR` branch; a `SE_KEY` Backspace is ignored.
+19. **Measure memory by subsystem before guessing.** The heap line alone did
+    not say what filled 3 GB. What did was a cached map load reading only
+    364 MB, textures included, while the heap held ~2 GB, and then the
+    decoded size of the game's audio. Sounds were decoded in full, kept twice
+    and never released.
+20. **Savegames do not carry every struct field.** Anything restored into
+    memory that `new` did not clear keeps garbage in the fields the save
+    leaves out. The renderer read it as overlay materials and masks. Set such
+    fields in the Read function itself.
+21. **Do not destroy objects that were only constructed.** Prey destructors
+    assume `Spawn` ran. A rejected savegame deleted the objects it had just
+    created and crashed in `hhWeaponRifle::ZoomOut`.
 
 ## 6. Performance: what is known
 

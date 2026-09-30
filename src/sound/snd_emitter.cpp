@@ -1039,6 +1039,14 @@ int idSoundEmitterLocal::StartSound( const idSoundShader* shader, const s_channe
 		}
 	}
 
+	// OpenPrey: a sample released by a level change that this level did not
+	// precache comes back the first time it plays (game thread)
+	soundSystemLocal.ReloadPurgedSample( leadinSample );
+	if( loopingSample != leadinSample )
+	{
+		soundSystemLocal.ReloadPurgedSample( loopingSample );
+	}
+
 	// set all the channel parameters here,
 	// a hardware voice will be allocated next update if the volume is high enough to be audible
 	if( channels.Num() == channels.Max() )
