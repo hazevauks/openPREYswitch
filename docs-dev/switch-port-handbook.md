@@ -17,41 +17,57 @@ Technical reference for the port: [switch-port.md](switch-port.md).
 Updated after every test round. When an issue is solved, it leaves this
 section and the lesson goes to section 5.
 
-**Story progress (2026-09-29):**
+**Story progress (2026-09-30):**
 
 - **The roadhouse plays through:** NPC conversations, the bar fight, and the
   abduction with its level change.
-- **game/feedingtowera loads and plays.**
+- **game/feedingtowera loads and plays**, further in each round, until the
+  driver crash below.
 
-### Crash in the driver in game/feedingtowera, and stutters with shadows on (fix to confirm)
+### Crash in the driver in game/feedingtowera, and stutters (fix to confirm)
 
-- **Symptoms (2026-09-29):**
-  - a crash during play in feedingtowera;
+- **Symptoms:**
+  - two crashes during play in feedingtowera (2026-09-29 and 2026-09-30), the
+    second in another area of the map;
   - with `r_shadows 1`, stutters when looking around;
-  - `r_shadows 0` made the game much faster.
-- **Crash report:** a corrupted slab pointer (`0x2000000020056a44`) in Mesa's
-  `nouveau_mm_allocate`, reached from `glBufferData` through
-  `R_AddModelSurfaces` → `st_bufferobj_data` → `nouveau_buffer_create`.
-- **Log:** 200-750 vertex cache buffers created per frame, 1-3 MB. The
-  roadhouse creates ~20.
+  - `r_shadows 0` makes the game much faster: back end 17-22 ms instead of
+    33-50 ms, 25-28 fps instead of 15-20.
+- **Crash reports:** corrupted slab pointers (`0x2000000020056a44`,
+  `0x6e400000000265d2`) read in `nouveau_bo_ref` inside Mesa's
+  `nouveau_mm_allocate`. The call chain is `R_AddModelSurfaces` →
+  `idVertexCache::Alloc` → `glBufferData` → `st_bufferobj_data` →
+  `nouveau_buffer_create`.
+- **Log:** 200-750 vertex cache buffers created per frame, 1-3 MB. The second
+  crash came right after a 1594-buffer frame, with `r_shadows 0` and
+  `r_reuseVertexStorage 1`. The roadhouse creates ~20.
 - **Cause (analysis):**
-  - animated models get new vertex, shadow (twice the vertexes) and per-light
-    caches every frame, and each new size makes Mesa create a new GPU
-    resource;
-  - on nouveau this is costly, and it is the allocator that crashed;
-  - shadows add a large share of these buffers, plus stencil fill on a GPU run
-    without Zcull.
-- **Change (build of 2026-09-29):** `r_reuseVertexStorage 1` (default) makes
-  the vertex cache reuse free buffers whose storage already has the same size,
-  after 3 idle frames, so Mesa writes into the existing storage.
-- **Test** in feedingtowera, with `r_shadows 1` and `com_logPerf 1`:
-  1. play and look around for a minute;
-  2. repeat with `r_reuseVertexStorage 0` for comparison;
+  - every vertex cache block had its own GL buffer, so every allocation was a
+    `glBufferData`;
+  - in nouveau, each costs a suballocation, a staging copy and deferred frees
+    through fence callbacks;
+  - animated models re-create their vertex, shadow and index caches every
+    frame, and new areas add bursts of hundreds more;
+  - shadows add to the count, but they are not the root cause.
+- **First attempt (build of 2026-09-29):** `r_reuseVertexStorage` reused
+  same-size storage. It reused ~80% in steady frames but none in bursts, and
+  the crash came back. It was removed.
+- **Change (build of 2026-09-30): vertex pages** (`r_vertexPages 1`, the
+  default):
+  - blocks are carved out of shared 8 MB buffers and written through
+    unsynchronized maps, which cost no driver allocation;
+  - freed ranges wait for a GPU fence before reuse;
+  - the frame temp buffers are written the same way.
+
+  Details are in switch-port.md, "Vertex buffer churn, vertex pages and
+  shadows".
+- **Test** in feedingtowera, with `com_logPerf 1` and `r_shadows 1`:
+  1. play through the area where it crashed;
+  2. walk into new areas and look around;
   3. send the log.
 
-  The `buffers N (... KB, M reused)` column should show most allocations
-  reused, with fewer stutters. If it is still slow, `r_shadows 0` stays the
-  recommendation for now.
+  In `buffers N (K KB, P paged)`, P should equal N. Check whether the stutters
+  and the crash are gone. `heap N MB` should stay flat over time. For
+  comparison, `r_vertexPages 0` plus a restart brings the old path back.
 
 ### Long first loads of new maps
 
@@ -63,13 +79,18 @@ section and the lesson goes to section 5.
 
 ### Savegame name keyboard (fix to confirm)
 
-- **Symptom:** the system keyboard did not open to name a save; it only
-  existed in the console.
-- **Change:** in menus, **Y** opens the system keyboard. The text replaces the
-  focused field's contents (End + Backspace, then the characters). The menu's
-  own button still confirms.
-- **Test:** open the save menu, select the name field (A), press Y, type a
-  name, then save.
+- **Test of 2026-09-29:** Y opened the keyboard, but the typed text was
+  appended to the default name instead of replacing it. Guessing the button was
+  also awkward.
+- **Cause:** `idEditWindow` only takes Backspace as a character event (what
+  Windows sends with the key). The Switch code posted it as a key event, which
+  the field ignores.
+- **Change (build of 2026-09-30):**
+  - clicking a text field (A, or a touch) opens the keyboard;
+  - Backspace is sent as a character, so the old text is erased;
+  - Y no longer does anything special in menus.
+- **Test:** in the save menu, click the name field with A, type a name, and
+  save.
 
 ### Rendering glitches in the Mesa 26 build (parked)
 
@@ -292,6 +313,15 @@ MSYSTEM=MSYS /c/Users/Usuario/Downloads/devkitPro/msys2/usr/bin/bash.exe -lc "cd
 16. **`sys.trigger()` passes a NULL activator in OpenPrey.** Any target that
     uses its activator must check it. `hhTarget_EndLevel` crashed at the end of
     the roadhouse.
+17. **Keep the GL driver out of per-frame allocation.** Mesa 20.1's nouveau
+    crashed in its suballocator under hundreds of `glBufferData` calls per
+    frame. Reusing same-size storage was not enough. Carving blocks out of
+    large buffers written through unsynchronized maps, with fences guarding
+    reuse, takes the driver out of the loop. A crash inside the driver during
+    a burst of allocations points at the allocation pattern, not at the
+    feature that is on screen (shadows here).
+18. **GUI text fields take Backspace as a character.** `idEditWindow` handles
+    Backspace in its `SE_CHAR` branch; a `SE_KEY` Backspace is ignored.
 
 ## 6. Performance: what is known
 
@@ -349,7 +379,7 @@ The full reference is the Performance section of
 | `r_dynamicResolutionMin` | 50 | Lowest resolution, in % |
 | `r_renderScale` | 100 | Highest resolution, in % |
 | `r_switchPerfProfile` | 3 | 0 = default; 1 = GPU 384 MHz; 2 = GPU 460.8; 3 = GPU 460.8 + RAM 1600. CPU: set 1224 or 1785 MHz in sys-clk / Horizon-OC |
-| `r_reuseVertexStorage` | 1 | Reuse same-size vertex buffer storage (fewer driver allocations) |
+| `r_vertexPages` | 1 | Vertex cache blocks in shared 8 MB buffers, no driver allocation per block (read at startup) |
 | `r_switchGLThread` | 1 | Mesa 26 build only: GL driver on its own thread (core 2); applies after `vid_restart` |
 | `r_useIndexBuffers` | 0 | Tested: no gain on the Switch |
 | `image_compressTextures` | 1 | DXT textures (2 also compresses normal maps) |

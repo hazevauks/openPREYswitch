@@ -142,10 +142,9 @@ last line is the last thing the engine printed. Two more files appear on failure
 The in-game mapping follows the Windows SDL3 backend so binds carry over (see the
 header of `src/sys/switch/switch_input.cpp`). The left stick moves, the right stick
 looks, and **+** opens the menu. In menus, the left stick moves the cursor, **A**
-clicks, **B** goes back, and touching the screen clicks where you touch. **Y**
-opens the system keyboard for the selected text field (for example the savegame
-name). The typed text replaces the field's contents; the menu's own button still
-confirms.
+clicks, **B** goes back, and touching the screen clicks where you touch. Clicking
+a text field (for example the savegame name) opens the system keyboard. The typed
+text replaces the field's contents; the menu's own button still confirms.
 
 Default scheme (modeled on current console shooters; applied only to unbound keys,
 so rebinding is kept): ZR fire, ZL alt fire, B jump, Y reload, X next weapon,
@@ -186,7 +185,7 @@ given; the reasoning behind each setting is in the source comment next to it.
 | cvar | Switch default | What it does |
 |---|---|---|
 | `r_switchPerfProfile` | 3 | Clock profile, official handheld configurations: 0 = system default (GPU 307.2 MHz), 1 = GPU 384, 2 = GPU 460.8, 3 = GPU 460.8 + EMC 1600. The CPU clock is left to overclocking tools. Restored on exit. |
-| `r_reuseVertexStorage` | 1 | Reuses free vertex cache buffers whose GL storage already has the requested size (see "Vertex buffer churn"). |
+| `r_vertexPages` | 1 | Vertex cache blocks are carved out of shared 8 MB buffers, so the driver does not allocate per block (see "Vertex buffer churn, vertex pages and shadows"). Read at startup. |
 | `r_switchGLThread` | 1 | Mesa 26 build only: runs the GL driver on its own thread (core 2). Applies on `vid_restart`. |
 | `r_fpsLock` | 30 | Holds frames 33.3 ms apart (0 = off). |
 | `r_dynamicResolution` | 1 | 3D resolution follows the frame time (`r_dynamicResolutionFPS` 30, `r_dynamicResolutionMin` 50, `r_renderScale` max). |
@@ -279,7 +278,7 @@ Findings, at GPU 460.8 MHz and EMC 1600 MHz:
     measurable change (22.8 vs 22.9 ms).
   - Vertex buffer re-creation in the roadhouse: modest, ~15-20 buffers and
     ~200 KB per frame. Busy later maps are another story (see "Vertex buffer
-    churn").
+    churn, vertex pages and shadows").
   - `r_useIndexBuffers 1`: no change in the bar (back end 43-47 ms either way).
     It created 30-60 more buffers per frame for animated models, which cancelled
     any saving on indices.
@@ -304,42 +303,95 @@ Sources:
   shadows off, less with shadows on
 - [Doom 3 (2019 version)](https://doomwiki.org/wiki/Doom_3_(2019_version))
 
-### Vertex buffer churn and shadows
+### Vertex buffer churn, vertex pages and shadows
 
 In game/feedingtowera (the first map after the roadhouse), `com_logHitches`
-showed 200-750 vertex cache buffers created per frame, 1-3 MB. Setting
-`r_shadows 0` made the game much faster and removed stutters when looking
-around. A crash in that map was a corrupted slab pointer in
-`nouveau_mm_allocate`, reached from `glBufferData` (`R_AddModelSurfaces` →
-`st_bufferobj_data` → `nouveau_buffer_create`).
+showed 200-750 vertex cache buffers created per frame, 1-3 MB, and single
+frames with 700-1600 when new areas came into view. `r_shadows 0` made the game
+much faster and removed stutters when looking around.
 
-- **Where the buffers come from:** animated models are re-instantiated every
-  frame. Each new surface gets fresh caches through `idVertexCache::Alloc`:
-  - its vertexes (`R_CreateAmbientCache`);
-  - its shadow vertexes, twice the vertex count
-    (`R_CreateVertexProgramShadowCache`);
-  - per-light data.
+**The crash.** It happened twice in that map, both times during such a burst:
 
-  The old caches are freed and re-created the next frame. Shadows are a large
-  part of this, besides the stencil fill cost on a GPU that nouveau runs
-  without Zcull.
-- **Why it hurts on the Switch:** `glBufferData` with a new size creates a new
-  resource. On nouveau that goes through its GPU memory suballocator, which is
-  costly, and it is where the crash was.
-- **Change:** `idVertexCache::Alloc` now prefers a free block whose GL storage
-  already has the exact size and kind (`r_reuseVertexStorage`).
-  - Mesa 20.1 then takes its same-size path (`bufferobj_data`: discard and
-    write, no new resource).
-  - The free list is kept in the order blocks were freed, and a block is only
-    reused after 3 idle frames, so the GPU is done with it and nouveau does not
-    reallocate a busy buffer.
-  - Animated models repeat the same sizes every frame, so most allocations
-    should match.
-  - `com_logPerf` and `com_logHitches` report the reuses (`N reused`).
-- **Not done (riskier):** moving per-frame surfaces to the frame temp buffer
-  (`AllocFrameTemp`). Cached dynamic models (`DM_CACHED`) keep their surfaces
-  across frames when the entity does not change, so a frame temp cache could
-  be read after it was overwritten.
+- a corrupted slab pointer in `nouveau_mm_allocate`, reached from
+  `glBufferData` (`R_AddModelSurfaces` → `idVertexCache::Alloc` →
+  `st_bufferobj_data` → `nouveau_buffer_create`);
+- the second time with `r_shadows 0` and `r_reuseVertexStorage 1`, in a
+  1594-buffer frame.
+
+So shadows only add to the load. The problem is the number of driver
+allocations.
+
+**Where the buffers come from.** Animated models are re-instantiated whenever
+their entity changes, which is every frame for anything animating. Each new
+surface gets fresh caches through `idVertexCache::Alloc`, and the old ones are
+freed:
+
+- its vertexes (`R_CreateAmbientCache`);
+- its shadow vertexes, twice the vertex count
+  (`R_CreateVertexProgramShadowCache`);
+- index caches for its light and shadow triangles.
+
+Static surfaces entering view for the first time also create caches, which
+makes the bursts.
+
+**Why it hurts on the Switch.** Before this change, every static block owned a
+GL buffer, and every allocation was a `glBufferData`. In Mesa 20.1's nouveau
+driver, each one costs:
+
+- a new resource from its suballocator (`nouveau_mm_allocate`);
+- a staging copy, which is a second allocation;
+- deferred frees through fence callbacks (`nouveau_fence_work`, which also
+  flushes the command buffer once a fence has more than 64 of them).
+
+In `libdrm_nouveau` for the Switch, every GPU buffer is `memalign` memory on
+the same heap as the game. That machinery ran thousands of times in a busy
+frame, and it is where both crashes were.
+
+**The first attempt.** `r_reuseVertexStorage` (build of 2026-09-29) reused
+same-size storage. On hardware it reused about 80% in steady frames but none
+in bursts, and did not stop the crash. It was removed.
+
+**Change: vertex pages** (`r_vertexPages`, on by default on the Switch).
+
+- Static blocks up to 1 MB are carved out of shared 8 MB buffers ("pages"),
+  created with `GL_STREAM_DRAW` so the driver keeps them in CPU-mappable
+  memory.
+- A block is written with `glMapBufferRange(..., GL_MAP_UNSYNCHRONIZED_BIT)`.
+  In nouveau that returns a pointer into the page with no wait, no staging and
+  no allocation (`nouveau_buffer_transfer_map`), and the write is a plain
+  copy.
+- The engine keeps it safe:
+  - a freed range goes on a retired list;
+  - at the end of each frame, the retired ranges get a fence
+    (`glFenceSync`);
+  - they are handed out again only when that fence has signaled, so the GPU
+    never reads a range that is being rewritten.
+- Ranges come in size classes: multiples of 64 bytes up to 256, then four per
+  power of two. Each class has its own free list, so there is no search or
+  merge, and a block wastes at most a quarter of its range.
+- The driver allocates only when a page is added. Larger blocks and the frame
+  temp buffers keep their own buffer.
+- The frame temp buffers are written the same way, after the fence of the frame
+  that last used them. Before, a `glBufferSubData` into a buffer drawn from
+  earlier in the frame made the driver stage every write.
+- `com_logPerf` / `com_logHitches` show `buffers N (K KB, P paged)`: N blocks
+  allocated, P of them from pages. The rest are driver allocations.
+- `com_logPerf` also shows `heap N MB`, the heap in use (GPU buffers and
+  textures included). A leak would show there.
+- `listVertexCache` prints the pages, free ranges and pending fences.
+
+**Not done:** moving per-frame surfaces to the frame temp buffer
+(`AllocFrameTemp`). Cached dynamic models (`DM_CACHED`) keep their surfaces
+across frames when the entity does not change, so a frame temp cache could be
+read after it was overwritten. Pages give the same saving without that risk.
+
+**Shadows themselves.** With the allocations gone, shadows still cost:
+
+- the stencil volume fill, with no Zcull on nouveau;
+- shadow caches twice the size of the model's vertexes.
+
+Hardware numbers in the same scene (2026-09-29 log): shadows on, back end
+33-50 ms at 15-20 fps; shadows off, back end 17-22 ms at 25-28 fps.
 
 ### Mesa 26 experiment
 
@@ -399,8 +451,9 @@ first visits.
 
 ## Next steps
 
-1. **Vertex buffer churn:** measure `r_reuseVertexStorage` 1 vs 0 in
-   feedingtowera, with shadows on (`com_logPerf`: buffers, `reused`, back end).
+1. **Vertex pages:** confirm on hardware that feedingtowera no longer crashes,
+   and compare `r_vertexPages` 1 vs 0 with shadows on (`com_logPerf`: buffers,
+   `paged`, front and back end, `heap`).
 2. **Loading:** compress first-visit textures on cores 1-2.
 3. **Render back end on its own core** (SMP), so game + front end and back end
    overlap instead of adding up. The vertex cache already has a CPU-memory mode

@@ -31,6 +31,7 @@ signals, mmap, dlopen and terminals do not exist on Horizon.
 #include <dirent.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <malloc.h>
 
 #include "switch_local.h"
 
@@ -751,9 +752,9 @@ static void Switch_ReportHitch( int frameMsec, int gameMsec, float swapMsec, con
 			opens1 - opens0, ( openSec1 - openSec0 ) * 1000.0,
 			( bytes1 - bytes0 ) / ( 1024.0 * 1024.0 ), ( readSec1 - readSec0 ) * 1000.0 );
 	}
-	common->Printf( "hitch: %d ms frame | game %d front %.0f back %.0f swap %.0f | draws %d, buffers %d (%d KB, %d reused) | files: %s | 3D scale %d%%\n",
+	common->Printf( "hitch: %d ms frame | game %d front %.0f back %.0f swap %.0f | draws %d, buffers %d (%d KB, %d paged) | files: %s | 3D scale %d%%\n",
 		frameMsec, gameMsec, perf.frontEndSec * 1000.0, perf.backEndSec * 1000.0, swapMsec,
-		perf.draws, perf.bufferAllocs, perf.bufferAllocBytes / 1024, perf.bufferReuses, files.c_str(),
+		perf.draws, perf.bufferAllocs, perf.bufferAllocBytes / 1024, perf.bufferPaged, files.c_str(),
 		cvarSystem->GetCVarInteger( "r_renderScaleCurrent" ) );
 }
 
@@ -765,10 +766,12 @@ com_logPerf 1 logs a one-line summary per second: frame rate, average and worst
 frame, and where the time went. Game logic, render front end and back end come
 from the com_speeds counters; swap is time blocked in eglSwapBuffers (vblank,
 r_fpsLock, or the CPU waiting for the GPU). "buffers" counts vertex cache
-buffers created per frame (glBufferData on fresh storage, costly on nouveau),
-"temp" is the per-frame vertex data and "overflow" the frames whose temp data
-did not fit. With r_perfGpuSync 1 "gpu wait" is the GPU work left after the
-CPU finished the frame. Comparing these with the Status Monitor CPU/GPU load
+blocks created per frame and how many went into vertex pages (the rest are
+glBufferData calls, a driver allocation each), "temp" is the per-frame vertex
+data, "overflow" the frames whose temp data did not fit, and "heap" the memory
+allocated from the heap (GPU buffers and textures included). With
+r_perfGpuSync 1 "gpu wait" is the GPU work left after the CPU finished the
+frame. Comparing these with the Status Monitor CPU/GPU load
 shows whether a frame is CPU bound, GPU bound, or serialized.
 ================
 */
@@ -808,7 +811,7 @@ static void Switch_UpdatePerfLog( int frameMsec, int gameMsec, float swapMsec, c
 	sum.draws += perf.draws;
 	sum.parmsSkipped += perf.parmsSkipped;
 	sum.bufferAllocs += perf.bufferAllocs;
-	sum.bufferReuses += perf.bufferReuses;
+	sum.bufferPaged += perf.bufferPaged;
 	sum.bufferAllocBytes += perf.bufferAllocBytes;
 	sum.tempBytes += perf.tempBytes;
 	sum.tempOverflows += perf.tempOverflows;
@@ -819,11 +822,11 @@ static void Switch_UpdatePerfLog( int frameMsec, int gameMsec, float swapMsec, c
 		if ( sum.gpuTailSec > 0.0 ) {
 			gpu = va( " (gpu wait %.1f)", sum.gpuTailSec * 1000.0 / n );
 		}
-		common->Printf( "perf: %.1f fps | frame %.1f ms (worst %d) | game %.1f | render front %.1f back %.1f%s | swap wait %.1f | draws %d, parms skipped %d | buffers %d (%d KB, %d reused), temp %d KB, overflow %d | 3D %d%%\n",
+		common->Printf( "perf: %.1f fps | frame %.1f ms (worst %d) | game %.1f | render front %.1f back %.1f%s | swap wait %.1f | draws %d, parms skipped %d | buffers %d (%d KB, %d paged), temp %d KB, overflow %d | heap %d MB | 3D %d%%\n",
 			n * 1000.0f / ( now - windowStart ), totalMsec / n, worstMsec,
 			gameTotal / n, sum.frontEndSec * 1000.0 / n, sum.backEndSec * 1000.0 / n, gpu.c_str(), swapTotal / n,
 			(int)( sum.draws / n ), (int)( sum.parmsSkipped / n ),
-			(int)( sum.bufferAllocs / n ), (int)( sum.bufferAllocBytes / n / 1024.0f ), (int)( sum.bufferReuses / n ), (int)( sum.tempBytes / n / 1024.0f ), sum.tempOverflows,
+			(int)( sum.bufferAllocs / n ), (int)( sum.bufferAllocBytes / n / 1024.0f ), (int)( sum.bufferPaged / n ), (int)( sum.tempBytes / n / 1024.0f ), sum.tempOverflows, (int)( mallinfo().uordblks / ( 1024 * 1024 ) ),
 			cvarSystem->GetCVarInteger( "r_renderScaleCurrent" ) );
 		windowStart = now;
 		frames = totalMsec = worstMsec = gameTotal = 0;

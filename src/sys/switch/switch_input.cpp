@@ -26,7 +26,7 @@ and do not feed AXIS_UP.
 
 While a GUI is active (menus) the left stick moves the cursor, A clicks
 (mouse 1) and B backs out (Escape). Touching the screen places the cursor and
-clicks. Y opens the system keyboard for the focused text field (savegame names).
+clicks. Clicking a text field (the savegame name) opens the system keyboard.
 
 While the console is down, A opens the system keyboard to type a command,
 the D-pad up/down walks the command history, L/R scroll, and B or - close it.
@@ -35,6 +35,10 @@ the D-pad up/down walks the command history, L/R scroll, and B or - close it.
 */
 
 #include "../../idlib/precompiled.h"
+#include "../../ui/DeviceContext.h"
+#include "../../ui/Window.h"
+#include "../../ui/UserInterfaceLocal.h"
+#include "../../ui/EditWindow.h"
 
 // idlib and libnx both define BIT(); they compute the same value, so let libnx own it here.
 #undef BIT
@@ -95,7 +99,6 @@ static switchInputMode_t	s_inputMode = INPUT_MODE_GAME;
 static const int KEY_NONE				= 0;
 static const int KEY_CONSOLE_TOGGLE		= -1;	// posts the console key
 static const int KEY_SOFTWARE_KEYBOARD	= -2;	// opens the system keyboard for a console command
-static const int KEY_GUI_KEYBOARD		= -3;	// opens the system keyboard to fill the focused GUI text field
 
 typedef struct {
 	u64		button;
@@ -110,7 +113,7 @@ static const switchButtonMap_t s_buttonMap[] = {
 	{ HidNpadButton_B,			K_JOY3,				K_ESCAPE,		KEY_CONSOLE_TOGGLE },
 	{ HidNpadButton_A,			K_JOY4,				K_MOUSE1,		KEY_SOFTWARE_KEYBOARD },
 	{ HidNpadButton_X,			K_JOY5,				KEY_NONE,		KEY_NONE },
-	{ HidNpadButton_Y,			K_JOY6,				KEY_GUI_KEYBOARD,	KEY_NONE },
+	{ HidNpadButton_Y,			K_JOY6,				KEY_NONE,		KEY_NONE },
 	{ HidNpadButton_Plus,		K_ESCAPE,			KEY_NONE,		KEY_NONE },
 	{ HidNpadButton_Minus,		KEY_CONSOLE_TOGGLE,	KEY_NONE,		KEY_CONSOLE_TOGGLE },
 	{ HidNpadButton_Up,			K_JOY9,				K_UPARROW,		K_UPARROW },
@@ -285,26 +288,53 @@ static void Switch_ConsoleKeyboard( void ) {
 ================
 Switch_GuiKeyboard
 
-Y in menus: asks for text with the system keyboard and puts it in the GUI text
-field that has focus (e.g. the savegame name), replacing what was there. The
-field's old text is erased with End + Backspace, as a keyboard user would.
-Nothing is confirmed, so the menu's own button still decides.
+A click on a GUI text field (e.g. the savegame name) opens the system keyboard,
+and the text replaces what was in the field. The old text is erased with End
+and Backspace, as a keyboard user would. idEditWindow only takes Backspace as a
+character (the one Windows sends with the key), not as a key event. Nothing is
+confirmed, so the menu's own button still decides.
 ================
 */
 static const int GUI_KEYBOARD_ERASE_CHARS = 64;
+static bool s_guiClickReleased = false;		// check for a text field after the click is handled
 
-static void Switch_GuiKeyboard( void ) {
+static void Switch_GuiKeyboard( const char *currentText ) {
 	char text[128];
 	if ( !Switch_ShowKeyboard( "OpenPrey", "Text for the selected field", text, sizeof( text ) ) ) {
 		return;
 	}
 	Switch_PostKey( K_END, true );
 	Switch_PostKey( K_END, false );
-	for ( int i = 0; i < GUI_KEYBOARD_ERASE_CHARS; i++ ) {
-		Switch_PostKey( K_BACKSPACE, true );
-		Switch_PostKey( K_BACKSPACE, false );
+	const int eraseChars = Max( GUI_KEYBOARD_ERASE_CHARS, idStr::Length( currentText ) );
+	for ( int i = 0; i < eraseChars; i++ ) {
+		Switch_QueEvent( SE_CHAR, K_BACKSPACE, 0, 0, NULL );
 	}
 	Switch_TypeText( text );
+}
+
+// the editable text field the cursor has just clicked, or NULL
+static idEditWindow *Switch_ClickedTextField( idUserInterface *gui ) {
+	idWindow *desktop = static_cast<idUserInterfaceLocal *>( gui )->GetDesktop();
+	idEditWindow *field = desktop ? dynamic_cast<idEditWindow *>( desktop->GetFocusedChild() ) : NULL;
+	if ( !field || !field->Contains( gui->CursorX(), gui->CursorY() ) ) {
+		return NULL;
+	}
+	return field;
+}
+
+static void Switch_CheckGuiTextField( idUserInterface *gui ) {
+	if ( !s_guiClickReleased ) {
+		return;
+	}
+	s_guiClickReleased = false;
+	if ( gui == NULL || s_inputMode != INPUT_MODE_MENU ) {
+		return;
+	}
+	idEditWindow *field = Switch_ClickedTextField( gui );
+	if ( field ) {
+		idWinVar *text = field->GetWinVarByName( "text" );
+		Switch_GuiKeyboard( text ? text->c_str() : "" );
+	}
 }
 
 static int Switch_KeyForMode( const switchButtonMap_t &map ) {
@@ -333,15 +363,15 @@ static void Switch_UpdateButtons( u64 held ) {
 			if ( key == KEY_SOFTWARE_KEYBOARD ) {
 				Switch_ConsoleKeyboard();
 				key = KEY_NONE;
-			} else if ( key == KEY_GUI_KEYBOARD ) {
-				Switch_GuiKeyboard();
-				key = KEY_NONE;
 			} else if ( key == KEY_CONSOLE_TOGGLE ) {
 				key = Sys_GetConsoleKey( false );
 			}
 			s_pressedAs[i] = key;
 			Switch_PostKey( key, true );
 		} else if ( s_pressedAs[i] ) {
+			if ( s_pressedAs[i] == K_MOUSE1 ) {
+				s_guiClickReleased = true;
+			}
 			Switch_PostKey( s_pressedAs[i], false );
 			s_pressedAs[i] = 0;
 		}
@@ -412,6 +442,9 @@ static void Switch_UpdateTouch( idUserInterface *gui ) {
 		// only start a click inside a GUI; always deliver the release
 		if ( !touching || gui ) {
 			Switch_PostKey( K_MOUSE1, touching );
+			if ( !touching ) {
+				s_guiClickReleased = true;
+			}
 			s_touchDown = touching;
 		}
 	}
@@ -462,6 +495,9 @@ void Switch_PollInput( void ) {
 		// keep a button held across the switch from firing again in the new mode
 		s_buttonsDown = padGetButtons( &s_pad );
 	}
+
+	// a click released last frame has been handled by the GUI by now
+	Switch_CheckGuiTextField( gui );
 
 	Switch_UpdateButtons( padGetButtons( &s_pad ) );
 

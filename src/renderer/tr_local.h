@@ -1120,7 +1120,7 @@ double	R_PerfTime( void );
 void	R_AddPerfTime( bool backEnd, double seconds );
 void	R_TakePerfTimes( double &frontEndSec, double &backEndSec );
 void	RB_CountPerfDraw( void );
-void	R_AddVertexCachePerf( int bufferAllocs, int bufferReuses, int bufferAllocBytes, int tempBytes, bool tempOverflow );
+void	R_AddVertexCachePerf( int bufferAllocs, int bufferPaged, int bufferAllocBytes, int tempBytes, bool tempOverflow );
 
 // cached glProgramEnvParameter4fvARB (tr_backend.cpp, r_cacheProgramParms)
 void	RB_ProgramEnvParameter4fv( GLenum target, GLuint index, const GLfloat *params );

@@ -203,7 +203,7 @@ typedef struct rendererPerf_s {
 	int		draws;				// draw calls
 	int		parmsSkipped;		// env parameter updates filtered by r_cacheProgramParms
 	int		bufferAllocs;		// vertex cache buffers (re)created with glBufferData
-	int		bufferReuses;		// of those, how many reused same-size GL storage
+	int		bufferPaged;		// of those, carved out of vertex pages (no driver allocation)
 	int		bufferAllocBytes;
 	int		tempBytes;			// frame temp vertex data
 	int		tempOverflows;		// frames whose temp data spilled into new buffers
