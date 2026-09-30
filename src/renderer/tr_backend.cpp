@@ -204,8 +204,9 @@ void RB_CountPerfDraw( void ) {
 }
 
 // idVertexCache::EndFrame
-void R_AddVertexCachePerf( int bufferAllocs, int bufferAllocBytes, int tempBytes, bool tempOverflow ) {
+void R_AddVertexCachePerf( int bufferAllocs, int bufferReuses, int bufferAllocBytes, int tempBytes, bool tempOverflow ) {
 	perfCounters.bufferAllocs += bufferAllocs;
+	perfCounters.bufferReuses += bufferReuses;
 	perfCounters.bufferAllocBytes += bufferAllocBytes;
 	perfCounters.tempBytes += tempBytes;
 	perfCounters.tempOverflows += tempOverflow ? 1 : 0;

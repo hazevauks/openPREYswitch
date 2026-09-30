@@ -142,7 +142,10 @@ last line is the last thing the engine printed. Two more files appear on failure
 The in-game mapping follows the Windows SDL3 backend so binds carry over (see the
 header of `src/sys/switch/switch_input.cpp`). The left stick moves, the right stick
 looks, and **+** opens the menu. In menus, the left stick moves the cursor, **A**
-clicks, **B** goes back, and touching the screen clicks where you touch.
+clicks, **B** goes back, and touching the screen clicks where you touch. **Y**
+opens the system keyboard for the selected text field (for example the savegame
+name). The typed text replaces the field's contents; the menu's own button still
+confirms.
 
 Default scheme (modeled on current console shooters; applied only to unbound keys,
 so rebinding is kept): ZR fire, ZL alt fire, B jump, Y reload, X next weapon,
@@ -182,7 +185,8 @@ given; the reasoning behind each setting is in the source comment next to it.
 
 | cvar | Switch default | What it does |
 |---|---|---|
-| `r_switchPerfProfile` | 3 | Clock profile, official handheld configurations: 0 = system default (GPU 307.2 MHz), 1 = GPU 384, 2 = GPU 460.8, 3 = GPU 460.8 + EMC 1600 + CPU 1224 MHz, 4 = as 3 with CPU 1785 MHz (experimental). Restored on exit. |
+| `r_switchPerfProfile` | 3 | Clock profile, official handheld configurations: 0 = system default (GPU 307.2 MHz), 1 = GPU 384, 2 = GPU 460.8, 3 = GPU 460.8 + EMC 1600. The CPU clock is left to overclocking tools. Restored on exit. |
+| `r_reuseVertexStorage` | 1 | Reuses free vertex cache buffers whose GL storage already has the requested size (see "Vertex buffer churn"). |
 | `r_switchGLThread` | 1 | Mesa 26 build only: runs the GL driver on its own thread (core 2). Applies on `vid_restart`. |
 | `r_fpsLock` | 30 | Holds frames 33.3 ms apart (0 = off). |
 | `r_dynamicResolution` | 1 | 3D resolution follows the frame time (`r_dynamicResolutionFPS` 30, `r_dynamicResolutionMin` 50, `r_renderScale` max). |
@@ -194,21 +198,20 @@ given; the reasoning behind each setting is in the source comment next to it.
 
 ### Clocks
 
-- **Profiles 3 and 4** set configuration 0x92220007 and raise the CPU to
-  1224 MHz (3) or 1785 MHz (4) through clkrst (pcv before 8.0.0), the service
-  sys-clk uses.
-  - The rate is set when the profile is applied and again after every loading
-    boost, which puts the CPU back to the configuration's rate.
-  - One second later it is set once more, and the rate read back is logged
-    (`CPU clock check`). On hardware the log said "set" while Status Monitor
-    kept showing ~1015 MHz, so something else (sys-clk, the system) was
-    overriding it.
-  - It is not re-checked periodically. A once-a-second check fought sys-clk:
-    the rate flipped between 1020 and 1224 MHz.
-- **Map loads and `common->Init`** use the system FastLoad boost mode: CPU 1785 MHz,
-  GPU at its minimum.
-- **Applying a changed profile in game:** the new configuration is set, then the
-  CPU boost mode is cycled so the system re-applies it.
+- **Profiles 1-3** pick official handheld PerformanceConfigurations, which set
+  the GPU and memory clocks. Profile 3 is 0x92220007 (GPU 460.8 MHz, EMC 1600
+  MHz).
+- **The CPU clock is not touched.** An earlier build raised it through clkrst
+  (1224 or 1785 MHz). The log read the rate back as set, but overclocking
+  sysmodules (sys-clk, Horizon-OC) keep applying their own CPU rate, and
+  Status Monitor kept showing ~1015 MHz.
+- **Recommended CPU clock:** set 1224 MHz, or 1785 MHz, in sys-clk or
+  Horizon-OC for this title. Title override runs under the host game's title
+  ID, so the rule goes on that game.
+- **Map loads and `common->Init`** use the system FastLoad boost mode: CPU 1785
+  MHz, GPU at its minimum.
+- **Applying a changed profile in game:** the new configuration is set, then
+  the CPU boost mode is cycled so the system re-applies it.
 
 ### Threads
 
@@ -274,7 +277,9 @@ Findings, at GPU 460.8 MHz and EMC 1600 MHz:
 - **Ruled out:**
   - ARB env parameter uploads: the cache skipped ~3-5k updates per frame with no
     measurable change (22.8 vs 22.9 ms).
-  - Vertex buffer re-creation: modest, ~15-20 buffers and ~200 KB per frame.
+  - Vertex buffer re-creation in the roadhouse: modest, ~15-20 buffers and
+    ~200 KB per frame. Busy later maps are another story (see "Vertex buffer
+    churn").
   - `r_useIndexBuffers 1`: no change in the bar (back end 43-47 ms either way).
     It created 30-60 more buffers per frame for animated models, which cancelled
     any saving on indices.
@@ -298,6 +303,43 @@ Sources:
   [GameBrew notes](https://www.gamebrew.org/wiki/Dhewm3_Switch): 20-30 fps with
   shadows off, less with shadows on
 - [Doom 3 (2019 version)](https://doomwiki.org/wiki/Doom_3_(2019_version))
+
+### Vertex buffer churn and shadows
+
+In game/feedingtowera (the first map after the roadhouse), `com_logHitches`
+showed 200-750 vertex cache buffers created per frame, 1-3 MB. Setting
+`r_shadows 0` made the game much faster and removed stutters when looking
+around. A crash in that map was a corrupted slab pointer in
+`nouveau_mm_allocate`, reached from `glBufferData` (`R_AddModelSurfaces` →
+`st_bufferobj_data` → `nouveau_buffer_create`).
+
+- **Where the buffers come from:** animated models are re-instantiated every
+  frame. Each new surface gets fresh caches through `idVertexCache::Alloc`:
+  - its vertexes (`R_CreateAmbientCache`);
+  - its shadow vertexes, twice the vertex count
+    (`R_CreateVertexProgramShadowCache`);
+  - per-light data.
+
+  The old caches are freed and re-created the next frame. Shadows are a large
+  part of this, besides the stencil fill cost on a GPU that nouveau runs
+  without Zcull.
+- **Why it hurts on the Switch:** `glBufferData` with a new size creates a new
+  resource. On nouveau that goes through its GPU memory suballocator, which is
+  costly, and it is where the crash was.
+- **Change:** `idVertexCache::Alloc` now prefers a free block whose GL storage
+  already has the exact size and kind (`r_reuseVertexStorage`).
+  - Mesa 20.1 then takes its same-size path (`bufferobj_data`: discard and
+    write, no new resource).
+  - The free list is kept in the order blocks were freed, and a block is only
+    reused after 3 idle frames, so the GPU is done with it and nouveau does not
+    reallocate a busy buffer.
+  - Animated models repeat the same sizes every frame, so most allocations
+    should match.
+  - `com_logPerf` and `com_logHitches` report the reuses (`N reused`).
+- **Not done (riskier):** moving per-frame surfaces to the frame temp buffer
+  (`AllocFrameTemp`). Cached dynamic models (`DM_CACHED`) keep their surfaces
+  across frames when the entity does not change, so a frame temp cache could
+  be read after it was overwritten.
 
 ### Mesa 26 experiment
 
@@ -349,18 +391,22 @@ It currently reports:
 The image cache regenerates once when `image_compressTextures` changes (it is
 keyed on the format), which takes minutes on the Switch CPU.
 
+**The first visit to a map** builds that map's cache. game/feedingtowera took
+130 s the first time, 100 s of it for 1550 images, 816 of which were compressed
+and written to `generated/`. File reads were only ~23 s of that. Later visits
+read the cache. Compressing on cores 1-2 while core 0 loads would shorten
+first visits.
+
 ## Next steps
 
-1. **Mesa 26 glitches:** bisect them with the handbook's list, or update the
-   port. Its speed now matches Mesa 20.1.
-2. **Measure CPU scaling** with profile 3 vs 4 (1224 vs 1785 MHz), with sys-clk
-   not overriding this title.
+1. **Vertex buffer churn:** measure `r_reuseVertexStorage` 1 vs 0 in
+   feedingtowera, with shadows on (`com_logPerf`: buffers, `reused`, back end).
+2. **Loading:** compress first-visit textures on cores 1-2.
 3. **Render back end on its own core** (SMP), so game + front end and back end
    overlap instead of adding up. The vertex cache already has a CPU-memory mode
    for that. GLthread would cover part of this.
 4. **Native renderer (deko3d)**, only if the above cannot reach 30 fps. It is the
    path to Zcull, compressed render targets and low CPU overhead, and a large
    project.
-5. **Loading:** fewer, larger reads for the image cache.
-6. **Audio:** check which OpenAL Soft backend the devkitPro build uses.
-7. **Multiplayer:** real sockets in `switch_net.cpp`.
+5. **Audio:** check which OpenAL Soft backend the devkitPro build uses.
+6. **Multiplayer:** real sockets in `switch_net.cpp`.

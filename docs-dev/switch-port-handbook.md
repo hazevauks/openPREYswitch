@@ -17,86 +17,70 @@ Technical reference for the port: [switch-port.md](switch-port.md).
 Updated after every test round. When an issue is solved, it leaves this
 section and the lesson goes to section 5.
 
-### Crash when the ship takes Tommy (end of game/roadhouse) (fix to confirm)
+**Story progress (2026-09-29):**
 
-- **Symptom (2026-09-29):**
-  - the whole roadhouse now plays through (NPCs, bar fight);
-  - the game crashes when the ship abducts Tommy, the moment the next map
-    should load.
-- **Crash report:** a NULL read in `hhTarget_EndLevel::Event_Activate`
-  (`src/Prey/game_targets.cpp`), called from the map script through
-  `sys.trigger()` (`idThread::Event_Trigger`). The faulting instruction is the
-  `activator->IsType( hhPlayer::Type )` call, with `activator` = NULL.
-- **Cause:** OpenPrey changed `sys.trigger()` to activate with a NULL
-  activator (commit d3bab3d, together with a biolabs energy node fix). Retail
-  passed the local player. `hhTarget_EndLevel` dereferences the activator
-  without checking, so this crashes on every platform.
-- **Fix (build of 2026-09-29):**
-  - `hhTarget_EndLevel` and `hhTarget_ControlVehicle` (vehicle entry, also
-    reachable from scripts) fall back to the local player when the activator
-    is NULL;
-  - `sys.trigger()` itself keeps OpenPrey's NULL activator.
-- **Test:** load a save from the bar fight (saves made with the script VM fix
-  are fine) and let the ship take Tommy. The next map should load.
+- **The roadhouse plays through:** NPC conversations, the bar fight, and the
+  abduction with its level change.
+- **game/feedingtowera loads and plays.**
 
-### Rendering glitches in the Mesa 26 build (`OpenPrey-mesa-sdk.nro`)
+### Crash in the driver in game/feedingtowera, and stutters with shadows on (fix to confirm)
 
-- **Appearance (screenshots from 2026-09-29, bathroom):**
-  - vertical black stripes over lit walls, posters and the mirror;
-  - areas much darker than with the default Mesa;
-  - in the mirror scene, a black band at the top and part of the image
-    shifted to the right.
-- **Does not happen** with `OpenPrey.nro` (devkitPro Mesa 20.1). It is a
-  problem in the Mesa 26 driver (danfromtico/StevensND port, with its own
-  Horizon backend), or in how the engine uses a feature that driver handles
-  differently.
-- **Performance:** with threads spread over the cores, Mesa 26 performed like
-  Mesa 20.1 (~100 ms per frame at ~2000 draws). GLthread
-  (`r_switchGLThread 1`) felt better, but the log showed little difference
-  (back end 74-79 ms with it, 76-86 ms without).
-- **Bisect test** (Mesa 26, standing in the bathroom, changing one item at a
-  time and noting whether the stripes go away):
-  1. `r_shadows 0` (stencil shadows);
-  2. `r_skipSpecular 1`, then `r_skipBump 1` (parts of the lighting);
-  3. `r_dynamicResolution 0` and `r_renderScale 100` (screen copy and upscale);
-  4. `r_switchGLThread 0` and `vid_restart` (GLthread);
-  5. `r_useIndexBuffers 1`.
-- **Result on 2026-09-29:** the stripes stayed with `r_skipSpecular 1`,
-  `r_skipBump 1`, `r_dynamicResolution 0` + `r_renderScale 100`,
-  `r_switchGLThread 0` + `vid_restart` and `r_useIndexBuffers 1`. Those are
-  ruled out. **`r_shadows 0` is still untested**: `r_shadow` (without the
-  "s") was typed, and the console answered `Unknown command`.
-- **If nothing helps:** update Mesa 26 to the newest version of the port and
-  test again. The default build stays on Mesa 20.1.
+- **Symptoms (2026-09-29):**
+  - a crash during play in feedingtowera;
+  - with `r_shadows 1`, stutters when looking around;
+  - `r_shadows 0` made the game much faster.
+- **Crash report:** a corrupted slab pointer (`0x2000000020056a44`) in Mesa's
+  `nouveau_mm_allocate`, reached from `glBufferData` through
+  `R_AddModelSurfaces` → `st_bufferobj_data` → `nouveau_buffer_create`.
+- **Log:** 200-750 vertex cache buffers created per frame, 1-3 MB. The
+  roadhouse creates ~20.
+- **Cause (analysis):**
+  - animated models get new vertex, shadow (twice the vertexes) and per-light
+    caches every frame, and each new size makes Mesa create a new GPU
+    resource;
+  - on nouveau this is costly, and it is the allocator that crashed;
+  - shadows add a large share of these buffers, plus stencil fill on a GPU run
+    without Zcull.
+- **Change (build of 2026-09-29):** `r_reuseVertexStorage 1` (default) makes
+  the vertex cache reuse free buffers whose storage already has the same size,
+  after 3 idle frames, so Mesa writes into the existing storage.
+- **Test** in feedingtowera, with `r_shadows 1` and `com_logPerf 1`:
+  1. play and look around for a minute;
+  2. repeat with `r_reuseVertexStorage 0` for comparison;
+  3. send the log.
 
-### CPU clock (profiles 3 and 4) does not stick
+  The `buffers N (... KB, M reused)` column should show most allocations
+  reused, with fewer stutters. If it is still slow, `r_shadows 0` stays the
+  recommendation for now.
 
-- **Symptom:** the log says `CPU clock 1020 -> 1224 MHz: set`, but Status
-  Monitor shows ~1015 MHz.
-- **Likely cause:** another service undoes the change. It may be sys-clk, if
-  it has a rule for the title used for title override or a global rule. It may
-  also be the system itself, which applies the performance configuration a
-  moment after our change.
-- **Diagnostics in this build:** one second after applying the profile (and
-  after every load), the game sets the rate again and logs
-  `CPU clock check: N MHz` with the rate read back.
-  - **If it shows 1224:** it worked.
-  - **If it shows ~1020:** something overrides the change. Disable the sys-clk
-    rules for the title and test again, or set the CPU clock with sys-clk
-    itself.
-- **Result on 2026-09-29 (profile 4):** the log read back `CPU clock check:
-  1785 MHz`, at startup and after the map load. According to the clock
-  service, the change stuck.
-- **Result on 2026-09-29 with Horizon-OC running:**
-  - the log read back 1224 MHz (profile 3) and 1785 MHz (profile 4) one second
-    after the change;
-  - the user saw no CPU increase.
-- **Conclusion:** Horizon-OC is built on sys-clk. Its sysmodule keeps applying
-  the clocks configured for the running title, so it undoes any change the
-  game makes. With Horizon-OC or sys-clk installed, set the CPU clock in its
-  per-title (or global) settings. Title override runs under the host game's
-  title ID, so the rule goes on that title. The in-game CPU rate only helps
-  on consoles without such a sysmodule.
+### Long first loads of new maps
+
+- **game/feedingtowera took 130 s the first time.** Of that, 100 s were images:
+  816 textures compressed to DXT and written to `generated/`.
+- **Later visits read the cache.** Roadhouse takes ~50 s with its cache.
+- **Idea:** compress on cores 1-2 while core 0 keeps loading (see
+  switch-port.md, Next steps).
+
+### Savegame name keyboard (fix to confirm)
+
+- **Symptom:** the system keyboard did not open to name a save; it only
+  existed in the console.
+- **Change:** in menus, **Y** opens the system keyboard. The text replaces the
+  focused field's contents (End + Backspace, then the characters). The menu's
+  own button still confirms.
+- **Test:** open the save menu, select the name field (A), press Y, type a
+  name, then save.
+
+### Rendering glitches in the Mesa 26 build (parked)
+
+- The user decided not to test Mesa 26 again. OpenPrey now works with Mesa
+  20.1 built from source (section 6).
+- **Symptoms:**
+  - vertical black stripes over lit surfaces;
+  - areas darker than they should be;
+  - a black band and a shifted image in the mirror scene.
+- **Ruled out:** specular, bump, render scale, GLthread and index buffers.
+- **Untested:** `r_shadows 0`.
 
 ### Zoom (D-pad up)
 
@@ -209,7 +193,7 @@ MSYSTEM=MSYS /c/Users/Usuario/Downloads/devkitPro/msys2/usr/bin/bash.exe -lc "cd
 
 | File | Role |
 |---|---|
-| `src/sys/switch/switch_main.cpp` | `main`, engine thread (16 MB stack), paths, events, crash handler, clocks (`r_switchPerfProfile` profiles, CPU through clkrst, loading boost), `com_logPerf`/`com_logHitches`, clean exit |
+| `src/sys/switch/switch_main.cpp` | `main`, engine thread (16 MB stack), paths, events, crash handler, clocks (`r_switchPerfProfile` GPU/memory profiles, loading boost), `com_logPerf`/`com_logHitches`, clean exit |
 | `switch_glimp.cpp` | EGL/Mesa, GL 4.3 compat context at 1280x720, swap, frame rate lock (`r_fpsLock`, `Switch_PaceFrame`) |
 | `switch_input.cpp` | Controls (game/menu/console), versioned default binds (`in_switchControlScheme`), system keyboard, touch |
 | `switch_gyro.cpp` | Gyro aiming (`in_gyro*`) |
@@ -276,9 +260,12 @@ MSYSTEM=MSYS /c/Users/Usuario/Downloads/devkitPro/msys2/usr/bin/bash.exe -lc "cd
 
     Before "fixing" a control, read the map script (inside the pk4 files) and
     check whether the Windows build behaves the same.
-12. **Fighting sys-clk.** Re-applying the CPU clock every second made the rate
-    flip in Status Monitor. The game now sets the clock only when the profile
-    is applied and after each load. A sys-clk setting for this title wins.
+12. **Leave the CPU clock to overclocking tools.** The game raised the CPU
+    through clkrst, and the rate read back as set. But sys-clk and Horizon-OC
+    keep applying their own CPU rate, so Status Monitor never showed the
+    change. Re-applying every second only made the rate flip. The profiles now
+    set only official GPU/memory configurations, and the recommended CPU rate
+    (1224 or 1785 MHz) goes in the overclocking tool, per title.
 13. **Building a 2020 Mesa with today's devkitPro:** Python 3.12 removed
     `distutils`, and the current newlib declares `timespec_get()` without
     implementing it. `tools/switch/mesa20` patches both.
@@ -361,7 +348,8 @@ The full reference is the Performance section of
 | `r_dynamicResolution` | 1 | Dynamic resolution; checks each drop and undoes it when it did not help |
 | `r_dynamicResolutionMin` | 50 | Lowest resolution, in % |
 | `r_renderScale` | 100 | Highest resolution, in % |
-| `r_switchPerfProfile` | 3 | 0 = default; 1 = GPU 384 MHz; 2 = GPU 460.8; 3 = GPU 460.8 + RAM 1600 + CPU 1224; 4 = as 3 with CPU 1785 (experimental) |
+| `r_switchPerfProfile` | 3 | 0 = default; 1 = GPU 384 MHz; 2 = GPU 460.8; 3 = GPU 460.8 + RAM 1600. CPU: set 1224 or 1785 MHz in sys-clk / Horizon-OC |
+| `r_reuseVertexStorage` | 1 | Reuse same-size vertex buffer storage (fewer driver allocations) |
 | `r_switchGLThread` | 1 | Mesa 26 build only: GL driver on its own thread (core 2); applies after `vid_restart` |
 | `r_useIndexBuffers` | 0 | Tested: no gain on the Switch |
 | `image_compressTextures` | 1 | DXT textures (2 also compresses normal maps) |

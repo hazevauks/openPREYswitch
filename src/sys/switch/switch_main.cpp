@@ -373,21 +373,14 @@ CLOCKS
 Performance profile (r_switchPerfProfile). Handheld mode runs applications on
 PerformanceConfiguration 0x00020003 (CPU 1020 / GPU 307.2 / EMC 1331.2 MHz);
 hardware test there: GPU 99% busy at 20-25 fps. Profiles 1-3 pick stronger
-official handheld configurations (switchbrew PTM_services). Docked mode
-(PerformanceMode Boost) already defaults to GPU 768 MHz and is left alone.
+official handheld configurations (switchbrew PTM_services), which raise the
+GPU and memory clocks. Docked mode (PerformanceMode Boost) already defaults to
+GPU 768 MHz and is left alone.
 
-Profile 3 also raises the CPU to 1224 MHz (the docked "CPU boost" rate) and
-profile 4 to 1785 MHz (the rate the system itself uses on loading screens;
-meant for measuring how much the CPU clock matters). The rate is set through
-clkrst (pcv before 8.0.0), the service sys-clk uses, when the profile is
-applied and again after every loading boost, which puts the CPU back to the
-configuration's rate. The system applies a configuration change a moment after
-the request, so the rate is set once more a second later, and the rate read
-back is logged ("CPU clock check"): if it is not the profile's rate, something
-else (sys-clk, the system) owns the CPU clock. It is not re-checked
-periodically: with sys-clk running, a once-a-second check kept both overriding
-each other (hardware test: the rate flipped between 1020 and 1224 MHz).
-Everything goes back to the defaults on exit.
+The CPU clock is not touched. An earlier build raised it through clkrst, but
+overclocking sysmodules (sys-clk, Horizon-OC) keep applying their own CPU rate
+and undid it on hardware; the CPU rate belongs to those tools (1224 or 1785
+MHz per title is recommended in docs-dev/switch-port.md).
 
 Loading boost (Sys_SetLoadingBoost): the system FastLoad boost mode, the one
 retail games use on loading screens. It raises the CPU to 1785 MHz and drops
@@ -398,122 +391,20 @@ and idSessionLocal::ExecuteMapChange.
 */
 
 static idCVar r_switchPerfProfile( "r_switchPerfProfile", "3", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
-	"clock profile (official handheld configurations): 0 = system default (GPU 307 MHz), 1 = GPU 384 MHz, 2 = GPU 460.8 MHz, 3 = GPU 460.8 MHz + memory 1600 MHz + CPU 1224 MHz, 4 = as 3 with CPU 1785 MHz (experimental)", 0, 4 );
+	"handheld clock profile (official configurations): 0 = system default (GPU 307 MHz), 1 = GPU 384 MHz, 2 = GPU 460.8 MHz, 3 = GPU 460.8 MHz + memory 1600 MHz", 0, 3 );
 
-typedef struct {
-	u32		config;		// handheld PerformanceConfiguration
-	u32		cpuHz;		// CPU rate to hold, 0 = the configuration's
-} switchPerfProfile_t;
-
-static const u32 SWITCH_HANDHELD_DEFAULT_CONFIG	= 0x00020003;	// Cpu1020MhzGpu307MhzEmc1331Mhz
-static const u32 SWITCH_DEFAULT_CPU_HZ			= 1020000000;
-static const switchPerfProfile_t s_perfProfiles[] = {
-	{ SWITCH_HANDHELD_DEFAULT_CONFIG,	0 },
-	{ 0x00020004,						0 },			// Cpu1020MhzGpu384MhzEmc1331Mhz
-	{ 0x92220008,						0 },			// Cpu1020MhzGpu460MhzEmc1331Mhz
-	{ 0x92220007,						1224000000 },	// Cpu1020MhzGpu460MhzEmc1600Mhz, CPU raised to 1224 MHz
-	{ 0x92220007,						1785000000 },	// same, CPU raised to 1785 MHz (experimental)
+static const u32 SWITCH_HANDHELD_DEFAULT_CONFIG = 0x00020003;	// Cpu1020MhzGpu307MhzEmc1331Mhz
+static const u32 s_handheldConfigs[] = {
+	SWITCH_HANDHELD_DEFAULT_CONFIG,
+	0x00020004,		// Cpu1020MhzGpu384MhzEmc1331Mhz
+	0x92220008,		// Cpu1020MhzGpu460MhzEmc1331Mhz
+	0x92220007,		// Cpu1020MhzGpu460MhzEmc1600Mhz
 };
-static const int NUM_PERF_PROFILES = sizeof( s_perfProfiles ) / sizeof( s_perfProfiles[0] );
+static const int NUM_PERF_PROFILES = sizeof( s_handheldConfigs ) / sizeof( s_handheldConfigs[0] );
 
 static int		s_loadingBoostDepth = 0;
 static int		s_appliedPerfProfile = -1;
 static bool		s_perfConfigChanged = false;	// handheld configuration differs from the default
-static int		s_cpuRecheckTime = 0;			// > 0: set the CPU rate once more and log it at this time
-
-// CPU clock through clkrst (8.0.0+) or pcv
-static bool				s_cpuClockOpen = false;
-static bool				s_cpuClockUsesClkrst = false;
-static ClkrstSession	s_cpuClockSession;
-static bool				s_cpuClockChanged = false;	// the CPU was moved off the configuration's rate
-
-static bool Switch_OpenCpuClock( void ) {
-	if ( s_cpuClockOpen ) {
-		return true;
-	}
-	if ( hosversionAtLeast( 8, 0, 0 ) ) {
-		if ( R_FAILED( clkrstInitialize() ) ) {
-			return false;
-		}
-		if ( R_FAILED( clkrstOpenSession( &s_cpuClockSession, PcvModuleId_CpuBus, 3 ) ) ) {
-			clkrstExit();
-			return false;
-		}
-		s_cpuClockUsesClkrst = true;
-	} else {
-		if ( R_FAILED( pcvInitialize() ) ) {
-			return false;
-		}
-		s_cpuClockUsesClkrst = false;
-	}
-	s_cpuClockOpen = true;
-	return true;
-}
-
-static void Switch_CloseCpuClock( void ) {
-	if ( !s_cpuClockOpen ) {
-		return;
-	}
-	if ( s_cpuClockUsesClkrst ) {
-		clkrstCloseSession( &s_cpuClockSession );
-		clkrstExit();
-	} else {
-		pcvExit();
-	}
-	s_cpuClockOpen = false;
-}
-
-static u32 Switch_GetCpuHz( void ) {
-	u32 hz = 0;
-	if ( s_cpuClockUsesClkrst ) {
-		clkrstGetClockRate( &s_cpuClockSession, &hz );
-	} else {
-		pcvGetClockRate( PcvModule_CpuBus, &hz );
-	}
-	return hz;
-}
-
-static Result Switch_SetCpuHz( u32 hz ) {
-	return s_cpuClockUsesClkrst ? clkrstSetClockRate( &s_cpuClockSession, hz ) : pcvSetClockRate( PcvModule_CpuBus, hz );
-}
-
-/*
-================
-Switch_EnforceCpuClock
-
-Holds the profile's CPU rate. Not while the loading boost runs (it wants 1785 MHz).
-================
-*/
-static void Switch_EnforceCpuClock( bool log ) {
-	if ( s_appliedPerfProfile < 0 || s_loadingBoostDepth > 0 ) {
-		return;
-	}
-	const u32 wanted = s_perfProfiles[s_appliedPerfProfile].cpuHz;
-	if ( wanted == 0 ) {
-		if ( s_cpuClockChanged && s_cpuClockOpen ) {
-			// switched to a profile without a CPU rate: hand the CPU back to the configuration's
-			Switch_SetCpuHz( SWITCH_DEFAULT_CPU_HZ );
-			s_cpuClockChanged = false;
-		}
-		return;
-	}
-	if ( !Switch_OpenCpuClock() ) {
-		if ( log ) {
-			common->Printf( "CPU clock: clkrst/pcv unavailable, the CPU stays at the configuration's rate\n" );
-		}
-		return;
-	}
-	const u32 current = Switch_GetCpuHz();
-	if ( current == wanted ) {
-		return;
-	}
-	const Result rc = Switch_SetCpuHz( wanted );
-	s_cpuClockChanged = s_cpuClockChanged || R_SUCCEEDED( rc );
-	if ( log ) {
-		common->Printf( "CPU clock %u -> %u MHz: %s\n", current / 1000000, wanted / 1000000,
-			R_SUCCEEDED( rc ) ? "set" : va( "failed (0x%X)", rc ) );
-	}
-}
 
 void Sys_SetLoadingBoost( bool enable ) {
 	if ( enable ) {
@@ -522,15 +413,13 @@ void Sys_SetLoadingBoost( bool enable ) {
 		}
 	} else if ( s_loadingBoostDepth > 0 && --s_loadingBoostDepth == 0 ) {
 		appletSetCpuBoostMode( ApmCpuBoostMode_Normal );
-		Switch_EnforceCpuClock( false );
-		s_cpuRecheckTime = Sys_Milliseconds() + 1000;
 	}
 }
 
 void Switch_ApplyPerformanceProfile( void ) {
 	const int profile = idMath::ClampInt( 0, NUM_PERF_PROFILES - 1, r_switchPerfProfile.GetInteger() );
 	s_appliedPerfProfile = profile;
-	const Result rc = apmSetPerformanceConfiguration( ApmPerformanceMode_Normal, s_perfProfiles[profile].config );
+	const Result rc = apmSetPerformanceConfiguration( ApmPerformanceMode_Normal, s_handheldConfigs[profile] );
 	s_perfConfigChanged = ( profile != 0 ) && R_SUCCEEDED( rc );
 
 	// A new configuration for the current mode is not always applied right away
@@ -544,36 +433,17 @@ void Switch_ApplyPerformanceProfile( void ) {
 	u32 active = 0;
 	apmGetPerformanceConfiguration( ApmPerformanceMode_Normal, &active );
 	common->Printf( "Switch clock profile %d (0x%08X): %s, active handheld configuration 0x%08X\n",
-		profile, s_perfProfiles[profile].config, R_SUCCEEDED( rc ) ? "set" : va( "failed (0x%X)", rc ), active );
-
-	Switch_EnforceCpuClock( true );
-	s_cpuRecheckTime = Sys_Milliseconds() + 1000;
+		profile, s_handheldConfigs[profile], R_SUCCEEDED( rc ) ? "set" : va( "failed (0x%X)", rc ), active );
 }
 
 void Switch_CheckPerformanceProfile( void ) {
 	// compare with the value applied instead of relying on the modified flag
 	if ( idMath::ClampInt( 0, NUM_PERF_PROFILES - 1, r_switchPerfProfile.GetInteger() ) != s_appliedPerfProfile ) {
 		Switch_ApplyPerformanceProfile();
-		return;
-	}
-	// one second after a change: the system has applied the configuration by now
-	if ( s_cpuRecheckTime > 0 && Sys_Milliseconds() >= s_cpuRecheckTime && s_loadingBoostDepth == 0 ) {
-		s_cpuRecheckTime = 0;
-		Switch_EnforceCpuClock( false );
-		if ( s_cpuClockOpen ) {
-			const u32 wanted = s_perfProfiles[s_appliedPerfProfile].cpuHz;
-			common->Printf( "CPU clock check: %u MHz (profile %d wants %s)\n", Switch_GetCpuHz() / 1000000,
-				s_appliedPerfProfile, wanted ? va( "%u MHz", wanted / 1000000 ) : "the configuration's rate" );
-		}
 	}
 }
 
 void Switch_RestorePerformanceProfile( void ) {
-	if ( s_cpuClockChanged && s_cpuClockOpen ) {
-		Switch_SetCpuHz( SWITCH_DEFAULT_CPU_HZ );
-		s_cpuClockChanged = false;
-	}
-	Switch_CloseCpuClock();
 	if ( s_perfConfigChanged ) {
 		apmSetPerformanceConfiguration( ApmPerformanceMode_Normal, SWITCH_HANDHELD_DEFAULT_CONFIG );
 		s_perfConfigChanged = false;
@@ -881,9 +751,9 @@ static void Switch_ReportHitch( int frameMsec, int gameMsec, float swapMsec, con
 			opens1 - opens0, ( openSec1 - openSec0 ) * 1000.0,
 			( bytes1 - bytes0 ) / ( 1024.0 * 1024.0 ), ( readSec1 - readSec0 ) * 1000.0 );
 	}
-	common->Printf( "hitch: %d ms frame | game %d front %.0f back %.0f swap %.0f | draws %d, buffers %d (%d KB) | files: %s | 3D scale %d%%\n",
+	common->Printf( "hitch: %d ms frame | game %d front %.0f back %.0f swap %.0f | draws %d, buffers %d (%d KB, %d reused) | files: %s | 3D scale %d%%\n",
 		frameMsec, gameMsec, perf.frontEndSec * 1000.0, perf.backEndSec * 1000.0, swapMsec,
-		perf.draws, perf.bufferAllocs, perf.bufferAllocBytes / 1024, files.c_str(),
+		perf.draws, perf.bufferAllocs, perf.bufferAllocBytes / 1024, perf.bufferReuses, files.c_str(),
 		cvarSystem->GetCVarInteger( "r_renderScaleCurrent" ) );
 }
 
@@ -938,6 +808,7 @@ static void Switch_UpdatePerfLog( int frameMsec, int gameMsec, float swapMsec, c
 	sum.draws += perf.draws;
 	sum.parmsSkipped += perf.parmsSkipped;
 	sum.bufferAllocs += perf.bufferAllocs;
+	sum.bufferReuses += perf.bufferReuses;
 	sum.bufferAllocBytes += perf.bufferAllocBytes;
 	sum.tempBytes += perf.tempBytes;
 	sum.tempOverflows += perf.tempOverflows;
@@ -948,11 +819,11 @@ static void Switch_UpdatePerfLog( int frameMsec, int gameMsec, float swapMsec, c
 		if ( sum.gpuTailSec > 0.0 ) {
 			gpu = va( " (gpu wait %.1f)", sum.gpuTailSec * 1000.0 / n );
 		}
-		common->Printf( "perf: %.1f fps | frame %.1f ms (worst %d) | game %.1f | render front %.1f back %.1f%s | swap wait %.1f | draws %d, parms skipped %d | buffers %d (%d KB), temp %d KB, overflow %d | 3D %d%%\n",
+		common->Printf( "perf: %.1f fps | frame %.1f ms (worst %d) | game %.1f | render front %.1f back %.1f%s | swap wait %.1f | draws %d, parms skipped %d | buffers %d (%d KB, %d reused), temp %d KB, overflow %d | 3D %d%%\n",
 			n * 1000.0f / ( now - windowStart ), totalMsec / n, worstMsec,
 			gameTotal / n, sum.frontEndSec * 1000.0 / n, sum.backEndSec * 1000.0 / n, gpu.c_str(), swapTotal / n,
 			(int)( sum.draws / n ), (int)( sum.parmsSkipped / n ),
-			(int)( sum.bufferAllocs / n ), (int)( sum.bufferAllocBytes / n / 1024.0f ), (int)( sum.tempBytes / n / 1024.0f ), sum.tempOverflows,
+			(int)( sum.bufferAllocs / n ), (int)( sum.bufferAllocBytes / n / 1024.0f ), (int)( sum.bufferReuses / n ), (int)( sum.tempBytes / n / 1024.0f ), sum.tempOverflows,
 			cvarSystem->GetCVarInteger( "r_renderScaleCurrent" ) );
 		windowStart = now;
 		frames = totalMsec = worstMsec = gameTotal = 0;

@@ -26,7 +26,7 @@ and do not feed AXIS_UP.
 
 While a GUI is active (menus) the left stick moves the cursor, A clicks
 (mouse 1) and B backs out (Escape). Touching the screen places the cursor and
-clicks.
+clicks. Y opens the system keyboard for the focused text field (savegame names).
 
 While the console is down, A opens the system keyboard to type a command,
 the D-pad up/down walks the command history, L/R scroll, and B or - close it.
@@ -95,6 +95,7 @@ static switchInputMode_t	s_inputMode = INPUT_MODE_GAME;
 static const int KEY_NONE				= 0;
 static const int KEY_CONSOLE_TOGGLE		= -1;	// posts the console key
 static const int KEY_SOFTWARE_KEYBOARD	= -2;	// opens the system keyboard for a console command
+static const int KEY_GUI_KEYBOARD		= -3;	// opens the system keyboard to fill the focused GUI text field
 
 typedef struct {
 	u64		button;
@@ -109,7 +110,7 @@ static const switchButtonMap_t s_buttonMap[] = {
 	{ HidNpadButton_B,			K_JOY3,				K_ESCAPE,		KEY_CONSOLE_TOGGLE },
 	{ HidNpadButton_A,			K_JOY4,				K_MOUSE1,		KEY_SOFTWARE_KEYBOARD },
 	{ HidNpadButton_X,			K_JOY5,				KEY_NONE,		KEY_NONE },
-	{ HidNpadButton_Y,			K_JOY6,				KEY_NONE,		KEY_NONE },
+	{ HidNpadButton_Y,			K_JOY6,				KEY_GUI_KEYBOARD,	KEY_NONE },
 	{ HidNpadButton_Plus,		K_ESCAPE,			KEY_NONE,		KEY_NONE },
 	{ HidNpadButton_Minus,		KEY_CONSOLE_TOGGLE,	KEY_NONE,		KEY_CONSOLE_TOGGLE },
 	{ HidNpadButton_Up,			K_JOY9,				K_UPARROW,		K_UPARROW },
@@ -247,28 +248,63 @@ Asks for a console command with the system keyboard applet and types it
 into the console, followed by Enter.
 ================
 */
-static void Switch_ConsoleKeyboard( void ) {
+static bool Switch_ShowKeyboard( const char *header, const char *guide, char *text, size_t textSize ) {
 	SwkbdConfig kbd;
-	char text[256] = {};
+	text[0] = '\0';
 	if ( R_FAILED( swkbdCreate( &kbd, 0 ) ) ) {
-		return;
+		return false;
 	}
 	swkbdConfigMakePresetDefault( &kbd );
-	swkbdConfigSetHeaderText( &kbd, "OpenPrey console" );
-	swkbdConfigSetGuideText( &kbd, "Command, e.g. com_showFPS 1" );
-	const Result rc = swkbdShow( &kbd, text, sizeof( text ) );
+	swkbdConfigSetHeaderText( &kbd, header );
+	swkbdConfigSetGuideText( &kbd, guide );
+	const Result rc = swkbdShow( &kbd, text, textSize );
 	swkbdClose( &kbd );
-	if ( R_FAILED( rc ) || !text[0] ) {
-		return;
-	}
+	return R_SUCCEEDED( rc ) && text[0] != '\0';
+}
+
+static void Switch_TypeText( const char *text ) {
 	for ( const char *c = text; *c; c++ ) {
 		const unsigned char ch = (unsigned char)*c;
-		if ( ch >= 32 && ch < 127 ) {	// the console input line is ASCII
+		if ( ch >= 32 && ch < 127 ) {	// GUI and console input lines are ASCII
 			Switch_QueEvent( SE_CHAR, ch, 0, 0, NULL );
 		}
 	}
+}
+
+static void Switch_ConsoleKeyboard( void ) {
+	char text[256];
+	if ( !Switch_ShowKeyboard( "OpenPrey console", "Command, e.g. com_showFPS 1", text, sizeof( text ) ) ) {
+		return;
+	}
+	Switch_TypeText( text );
 	Switch_PostKey( K_ENTER, true );
 	Switch_PostKey( K_ENTER, false );
+}
+
+/*
+================
+Switch_GuiKeyboard
+
+Y in menus: asks for text with the system keyboard and puts it in the GUI text
+field that has focus (e.g. the savegame name), replacing what was there. The
+field's old text is erased with End + Backspace, as a keyboard user would.
+Nothing is confirmed, so the menu's own button still decides.
+================
+*/
+static const int GUI_KEYBOARD_ERASE_CHARS = 64;
+
+static void Switch_GuiKeyboard( void ) {
+	char text[128];
+	if ( !Switch_ShowKeyboard( "OpenPrey", "Text for the selected field", text, sizeof( text ) ) ) {
+		return;
+	}
+	Switch_PostKey( K_END, true );
+	Switch_PostKey( K_END, false );
+	for ( int i = 0; i < GUI_KEYBOARD_ERASE_CHARS; i++ ) {
+		Switch_PostKey( K_BACKSPACE, true );
+		Switch_PostKey( K_BACKSPACE, false );
+	}
+	Switch_TypeText( text );
 }
 
 static int Switch_KeyForMode( const switchButtonMap_t &map ) {
@@ -296,6 +332,9 @@ static void Switch_UpdateButtons( u64 held ) {
 			int key = Switch_KeyForMode( map );
 			if ( key == KEY_SOFTWARE_KEYBOARD ) {
 				Switch_ConsoleKeyboard();
+				key = KEY_NONE;
+			} else if ( key == KEY_GUI_KEYBOARD ) {
+				Switch_GuiKeyboard();
 				key = KEY_NONE;
 			} else if ( key == KEY_CONSOLE_TOGGLE ) {
 				key = Sys_GetConsoleKey( false );

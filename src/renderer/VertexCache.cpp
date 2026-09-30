@@ -38,6 +38,11 @@ static const int	EXPAND_HEADERS = 1024;
 idCVar idVertexCache::r_showVertexCache( "r_showVertexCache", "0", CVAR_INTEGER|CVAR_RENDERER, "" );
 idCVar idVertexCache::r_vertexBufferMegs( "r_vertexBufferMegs", "32", CVAR_INTEGER|CVAR_RENDERER, "" );
 
+// OpenPrey: GL storage reuse by size (idVertexCache::Alloc)
+static idCVar r_reuseVertexStorage( "r_reuseVertexStorage", "1", CVAR_RENDERER | CVAR_BOOL, "reuse free vertex cache buffers whose GL storage has the requested size, instead of reallocating storage" );
+static const int	STORAGE_REUSE_FRAMES = 3;		// frames a freed block stays idle before its storage is rewritten
+static const int	STORAGE_REUSE_SEARCH = 128;		// free blocks examined per allocation
+
 idVertexCache		vertexCache;
 
 /*
@@ -82,20 +87,17 @@ void idVertexCache::ActuallyFree( vertCache_t *block ) {
 		}
 	}
 	block->tag = TAG_FREE;		// mark as free
+	block->frameFreed = currentFrame;
 
 	// unlink stick it back on the free list
 	block->next->prev = block->prev;
 	block->prev->next = block->next;
 
-#if 1
-	// stick it on the front of the free list so it will be reused immediately
-	block->next = freeStaticHeaders.next;
-	block->prev = &freeStaticHeaders;
-#else
-	// stick it on the back of the free list so it won't be reused soon (just for debugging)
+	// OpenPrey: stick it on the back of the free list, so the list stays in the order
+	// blocks were freed and Alloc reuses the oldest ones, which the GPU is done with
+	// (see idVertexCache::Alloc)
 	block->next = &freeStaticHeaders;
 	block->prev = freeStaticHeaders.prev;
-#endif
 
 	block->next->prev = block;
 	block->prev->next = block;
@@ -244,14 +246,46 @@ void idVertexCache::Alloc( void *data, int size, vertCache_t **buffer, bool inde
 			block->next->prev = block;
 			block->prev->next = block;
 
+			block->vbo = 0;
+			block->virtMem = NULL;
+			block->storageSize = 0;
+			block->storageIndex = false;
+			block->storageStream = false;
+			block->frameFreed = currentFrame - STORAGE_REUSE_FRAMES;
 			if( !virtualMemory ) {
 				glGenBuffersARB( 1, & block->vbo );
 			}
 		}
 	}
 
+	// OpenPrey: prefer a free block whose GL storage already has this exact size and
+	// kind. glBufferData then takes Mesa's same-size path, which writes into the
+	// existing storage instead of creating a new resource: animated models re-create
+	// their caches every frame (hundreds of allocations per frame in busy maps), and
+	// on the Switch every new resource went through nouveau's allocator (a crash in
+	// nouveau_mm_allocate was seen there, and busy maps stuttered). The free list is
+	// in the order blocks were freed, so only blocks idle for STORAGE_REUSE_FRAMES are
+	// taken, when the GPU no longer reads them and the write needs no new storage.
+	block = NULL;
+	if ( !virtualMemory && !allocatingTempBuffer && r_reuseVertexStorage.GetBool() ) {
+		int checked = 0;
+		for ( vertCache_t *candidate = freeStaticHeaders.next; candidate != &freeStaticHeaders && checked < STORAGE_REUSE_SEARCH; candidate = candidate->next, checked++ ) {
+			if ( currentFrame - candidate->frameFreed < STORAGE_REUSE_FRAMES ) {
+				break;	// the rest of the list was freed even more recently
+			}
+			if ( candidate->storageSize == size && candidate->storageIndex == indexBuffer && !candidate->storageStream ) {
+				block = candidate;
+				staticReuseThisFrame++;
+				break;
+			}
+		}
+	}
+	if ( !block ) {
+		// the oldest free block
+		block = freeStaticHeaders.next;
+	}
+
 	// move it from the freeStaticHeaders list to the staticHeaders list
-	block = freeStaticHeaders.next;
 	block->next->prev = block->prev;
 	block->prev->next = block->next;
 	block->next = staticHeaders.next;
@@ -293,6 +327,9 @@ void idVertexCache::Alloc( void *data, int size, vertCache_t **buffer, bool inde
 				glBufferDataARB( GL_ARRAY_BUFFER_ARB, (GLsizeiptrARB)size, data, GL_STATIC_DRAW_ARB );
 			}
 		}
+		block->storageSize = size;
+		block->storageIndex = indexBuffer;
+		block->storageStream = allocatingTempBuffer;
 	} else {
 		block->virtMem = Mem_Alloc( size );
 		SIMDProcessor->Memcpy( block->virtMem, data, size );
@@ -472,12 +509,13 @@ void idVertexCache::EndFrame() {
 	}
 
 
-	R_AddVertexCachePerf( staticCountThisFrame, staticAllocThisFrame, dynamicAllocThisFrame, tempOverflow );
+	R_AddVertexCachePerf( staticCountThisFrame, staticReuseThisFrame, staticAllocThisFrame, dynamicAllocThisFrame, tempOverflow );
 
 	currentFrame = tr.frameCount;
 	listNum = currentFrame % NUM_VERTEX_FRAMES;
 	staticAllocThisFrame = 0;
 	staticCountThisFrame = 0;
+	staticReuseThisFrame = 0;
 	dynamicAllocThisFrame = 0;
 	dynamicCountThisFrame = 0;
 	tempOverflow = false;

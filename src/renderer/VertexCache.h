@@ -49,6 +49,12 @@ typedef struct vertCache_s {
 	struct vertCache_s	**	user;				// will be set to zero when purged
 	struct vertCache_s *next, *prev;	// may be on the static list or one of the frame lists
 	int				frameUsed;			// it can't be purged if near the current frame
+
+	// OpenPrey: GL storage kept by the vbo between uses (see idVertexCache::Alloc)
+	int				storageSize;		// bytes last given to glBufferData, 0 = none
+	bool			storageIndex;		// that storage holds indexes
+	bool			storageStream;		// that storage was specified as GL_STREAM_DRAW
+	int				frameFreed;			// frame the block went back on the free list
 } vertCache_t;
 
 
@@ -115,6 +121,7 @@ private:
 
 	int				staticAllocThisFrame;	// debug counter
 	int				staticCountThisFrame;
+	int				staticReuseThisFrame;	// allocations that reused same-size GL storage
 	int				dynamicAllocThisFrame;
 	int				dynamicCountThisFrame;
 
