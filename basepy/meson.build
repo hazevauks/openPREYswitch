@@ -40,7 +40,8 @@ if build_games
         get_option('b_lto') ? ['--lto'] : [],
         '@OUTPUT@',
         find_program('objcopy', required: true),
-        meson.get_compiler('cpp').cmd_array(),
+        # the LTO prelink generates the game's code, with the same profile flags
+        meson.get_compiler('cpp').cmd_array() + switch_pgo_args,
         '--',
         '@INPUT@',
       ],

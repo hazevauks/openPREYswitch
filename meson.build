@@ -17,6 +17,50 @@ endif
 # engine because Switch homebrew cannot load a separate game module at runtime.
 is_switch = host_system == 'horizon'
 
+# Nintendo Switch profile-guided optimization (switch_pgo; docs-dev/switch-port.md,
+# "LTO and PGO"). Profile files are named after the object path relative to the
+# build dir (-fprofile-prefix-path), spelled as the compiler's working directory:
+# the Windows form under MSYS2, hence cygpath.
+switch_pgo = get_option('switch_pgo')
+switch_pgo_args = []
+switch_pgo_link_args = []
+if is_switch and switch_pgo != 'off'
+  cygpath = find_program('cygpath', required: false)
+  switch_pgo_prefix = meson.global_build_root()
+  if cygpath.found()
+    switch_pgo_prefix = run_command(cygpath, '-w', meson.global_build_root(), check: true).stdout().strip()
+  endif
+  if switch_pgo == 'generate'
+    # instrumented build: each .gcda is written to the SD card at exit
+    switch_pgo_args = [
+      '-fprofile-generate=sdmc:/switch/openprey/pgo',
+      '-fprofile-prefix-path=' + switch_pgo_prefix,
+      '-fprofile-update=prefer-atomic',
+      '-DOPENPREY_PGO_GENERATE',
+    ]
+    # --wrap=fopen: see OPENPREY_PGO_GENERATE in src/sys/switch/switch_main.cpp
+    switch_pgo_link_args = switch_pgo_args + ['-Wl,--wrap=fopen']
+  else
+    switch_pgo_data = get_option('switch_pgo_data')
+    if switch_pgo_data == ''
+      switch_pgo_data = meson.project_source_root() / '.tmp' / 'pgo-data'
+    endif
+    if cygpath.found()
+      switch_pgo_data = run_command(cygpath, '-m', switch_pgo_data, check: true).stdout().strip()
+    endif
+    switch_pgo_args = [
+      '-fprofile-use=' + switch_pgo_data,
+      '-fprofile-prefix-path=' + switch_pgo_prefix,
+      '-fprofile-partial-training',
+      '-fprofile-correction',
+      '-Wno-missing-profile',
+    ]
+    switch_pgo_link_args = switch_pgo_args
+  endif
+  add_project_arguments(switch_pgo_args, language: ['c', 'cpp'])
+  add_project_link_arguments(switch_pgo_link_args, language: ['c', 'cpp'])
+endif
+
 binary_arch = host_cpu_family
 if host_cpu_family == 'x86_64'
   binary_arch = 'x64'

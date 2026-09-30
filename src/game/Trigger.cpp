@@ -796,14 +796,15 @@ idTrigger_Timer::Event_Use
 void idTrigger_Timer::Event_Use( idEntity *activator ) {
 	// if on, turn it off
 	if ( on ) {
-		if ( offName.Length() && offName.Icmp( activator->GetName() ) ) {
+		// a named activator is required; a NULL one (sys.trigger in multiplayer) never matches
+		if ( offName.Length() && ( !activator || offName.Icmp( activator->GetName() ) ) ) {
 			return;
 		}
 		on = false;
 		CancelEvents( &EV_Timer );
 	} else {
 		// turn it on
-		if ( onName.Length() && onName.Icmp( activator->GetName() ) ) {
+		if ( onName.Length() && ( !activator || onName.Icmp( activator->GetName() ) ) ) {
 			return;
 		}
 		on = true;

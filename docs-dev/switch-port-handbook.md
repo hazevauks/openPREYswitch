@@ -32,6 +32,58 @@ section and the lesson goes to section 5.
   log, heap stable;
 - the savegame name keyboard: clicking the field opens it.
 
+**Confirmed on hardware (2026-09-30):** the LTO build held 30 fps through the
+opening maps, with shadows off and the CPU at 1224 MHz (Horizon-OC), dipping
+to 25. The plain build dropped further. LTO is now the default
+(`b_lto` in the cross file).
+
+### Crash in a scripted teleport (fix to confirm)
+
+- **Crash (2026-09-30, build 9592b60):** `far 0x0` in
+  `idPlayerStart::Event_TeleportPlayer`, called from `idThread::Event_Trigger`
+  (script `sys.trigger`), after loading the game.
+- **Cause:** upstream OpenPrey (`d3bab3d`) made `sys.trigger()` pass a NULL
+  activator. Prey's SDK and Doom 3 pass the local player, and the shipped
+  scripts were written for that. This is the third crash from it: level end,
+  vehicle target, teleport.
+- **Change:**
+  - in single player, `sys.trigger()` passes the local player again; in
+    multiplayer it stays NULL, as upstream intended;
+  - an audit of all 140 `EV_Activate` handlers found 4 that dereferenced the
+    activator unchecked (`idPlayerStart`, `idFuncRadioChatter`,
+    `idItemRemover`, `idTrigger_Timer`). They now handle NULL as well.
+  - This is game code: carry it over to OpenPrey-GameLibs.
+- **Test:** load the same save and play on from there.
+
+### Settings menu (to test)
+
+- **Asked by the user:** toggle fps, gyro, shadows and the like without typing
+  commands.
+- **Change:** **-** opens a settings overlay drawn by the engine
+  (`switch_settings.cpp`; switch-port.md, "Settings menu"). During play it
+  also opens the pause menu, so the game waits. Y inside it opens the console.
+- **Shadows are now off by default** on the Switch. Older configs get that
+  once through `com_switchSettings`.
+- **Test:**
+  - open it in game and in the main menu, and change every item;
+  - close it with B, - and +; the game should resume;
+  - Y should open the console;
+  - quit and restart; the choices should be kept.
+
+### PGO training run (to do)
+
+- **Asked by the user:** try profile-guided optimization on the LTO build.
+- `OpenPrey-pgo.nro` is the instrumented build (`builddir-switch-pgo/`,
+  `-Dswitch_pgo=generate`). It runs slower while it records.
+- **Run:**
+  1. play 10-20 minutes of normal play (menus, a map load, combat, busy
+     areas);
+  2. **quit from the game's menu**, since the profiles are only written at a
+     clean exit;
+  3. copy `sdmc:/switch/openprey/pgo/` into `.tmp/pgo-data/`;
+  4. build with `-Dswitch_pgo=use` (switch-port.md, "LTO and PGO") and compare
+     with the LTO build at the same spots.
+
 ### Slow loads (fix to confirm)
 
 - **Cached loads:** feedingtowera from a save took 78.5 s. Of that, 45 s were
@@ -76,18 +128,6 @@ section and the lesson goes to section 5.
   in feedingtowerb, out of 3.19 GB.
 - It grows slowly within a map (~90 MB in ~15 min) and drops at map changes.
 - Watch it on long sessions before the release.
-
-### LTO build (A/B test pending)
-
-- **Asked by a friend of the user (2026-09-30):** evaluate LTO and PGO.
-- **LTO builds and links** as `OpenPrey-lto.nro` (`builddir-switch-lto/`,
-  `-Db_lto=true`). It needed an LTO mode in `make_game_object.py` and an ODR
-  fix. PGO is feasible but not done; see switch-port.md, "LTO and PGO".
-- **Expected gain is small:** it covers only our CPU code (game, front end),
-  not Mesa or the GPU.
-- **Test:** at the same spot, `com_logPerf 1` on `OpenPrey.nro` and on
-  `OpenPrey-lto.nro`; compare fps, game, front and back. Make it the default
-  only if the gain is clear and nothing breaks.
 
 ### Rendering glitches in the Mesa 26 build (parked)
 
@@ -134,7 +174,7 @@ section and the lesson goes to section 5.
 | `/opt/devkitpro` path | Mapped in `devkitPro\msys2\etc\fstab`. Backup: `fstab.bak-antes-openprey`. If the devkitPro folder moves, fix that line. |
 | Python | Windows Python is not installed. Use `devkitPro/msys2/usr/bin/python3.exe`. |
 | Cross file | `tools/switch/meson/switch-cross.ini` (`host_machine.system = 'horizon'`, `-D__SWITCH__`) |
-| Build dirs | `builddir-switch/` (main), `builddir-switch-mesa26/` (Mesa 26 experiment), `builddir-switch-mesa20/` (Mesa 20.1 built from source), `builddir-switch-lto/` (LTO variant) |
+| Build dirs | `builddir-switch/` (main), `builddir-switch-mesa26/` (Mesa 26 experiment), `builddir-switch-mesa20/` (Mesa 20.1 built from source), `builddir-switch-pgo/` (PGO: instrumented or optimized) |
 
 ### Building
 
@@ -145,9 +185,10 @@ MSYSTEM=MSYS /c/Users/Usuario/Downloads/devkitPro/msys2/usr/bin/bash.exe -lc "cd
 - `MESON_RSP_THRESHOLD=2147483647` is **required**. Without it, long link
   lines go into a response file, MSYS2 does not convert its paths, and the
   link fails.
-- A full build takes about 15 minutes. Touching shared headers (for example
-  `RenderSystem.h`) rebuilds everything; touching only
-  `src/sys/switch/*.cpp` is quick.
+- A full build takes about 30 minutes. Touching shared headers (for example
+  `RenderSystem.h`) recompiles everything.
+- With LTO (the default), every change also relinks everything, about 10
+  minutes. For quick experiments use a dir configured with `-Db_lto=false`.
 - Configuring from scratch:
   `meson setup builddir-switch --cross-file tools/switch/meson/switch-cross.ini -Dbuildtype=release`
 - Output: `builddir-switch/OpenPrey.nro`. With symbols:
@@ -204,8 +245,10 @@ MSYSTEM=MSYS /c/Users/Usuario/Downloads/devkitPro/msys2/usr/bin/bash.exe -lc "cd
   - **Do not use `noclip` in scripted areas.** In noclip the player does not
     touch triggers (`if ( !noclip ... ) TouchTriggers()` in `Player.cpp`), so
     the scene does not progress. Load an earlier save and walk normally.
-- **Game console:** the **−** button opens and closes it; **A** opens the
-  system keyboard.
+- **Settings menu:** the **−** button opens and closes it (fps, frame rate
+  lock, shadows, gyro, look speed...). **Y** there opens the **game
+  console**; in the console, **A** opens the system keyboard and **−** closes
+  it.
 
 ## 4. Switch code map
 
@@ -213,11 +256,12 @@ MSYSTEM=MSYS /c/Users/Usuario/Downloads/devkitPro/msys2/usr/bin/bash.exe -lc "cd
 |---|---|
 | `src/sys/switch/switch_main.cpp` | `main`, engine thread (16 MB stack), paths, events, crash handler, clocks (`r_switchPerfProfile` GPU/memory profiles, loading boost), `com_logPerf`/`com_logHitches`, clean exit |
 | `switch_glimp.cpp` | EGL/Mesa, GL 4.3 compat context at 1280x720, swap, frame rate lock (`r_fpsLock`, `Switch_PaceFrame`) |
-| `switch_input.cpp` | Controls (game/menu/console), versioned default binds (`in_switchControlScheme`), system keyboard, touch |
+| `switch_input.cpp` | Controls (game/menu/console/settings), versioned default binds (`in_switchControlScheme`), system keyboard, touch |
+| `switch_settings.cpp` | Settings menu overlay (the − button) and versioned settings defaults (`com_switchSettings`) |
 | `switch_gyro.cpp` | Gyro aiming (`in_gyro*`) |
 | `switch_threads.cpp` | Threads and locks; `__wrap_pthread_create` places each thread on a core |
 | `switch_net.cpp` | Loopback-only networking (stub) |
-| `tools/switch/make_game_object.py` | "Fake DLL": links the game into one object (`ld -r`) exporting only `GetGameAPI` |
+| `tools/switch/make_game_object.py` | "Fake DLL": links the game into one object (`ld -r`) exporting only `GetGameAPI`; with LTO it generates the game's code there |
 | `tools/switch/gen_gl11_loader.py` | Generates the GL 1.1 function pointers through `eglGetProcAddress` |
 | `tools/switch/gltest/` | GL capability probe for the hardware |
 | `tools/switch/mesa20/` | Rebuilds devkitPro's Mesa 20.1 from source |
@@ -307,9 +351,12 @@ MSYSTEM=MSYS /c/Users/Usuario/Downloads/devkitPro/msys2/usr/bin/bash.exe -lc "cd
     `idEntity::TouchTriggers` already fell back to bounds, but
     `hhTrigger::IsEncroaching` did not, so `isSimpleBox 0` triggers were
     touched and then dropped. Both now accept the player by bounds.
-16. **`sys.trigger()` passes a NULL activator in OpenPrey.** Any target that
-    uses its activator must check it. `hhTarget_EndLevel` crashed at the end of
-    the roadhouse.
+16. **Keep the activator the shipped scripts expect.** Upstream OpenPrey made
+    `sys.trigger()` pass a NULL activator. Targets written for Prey's SDK
+    behavior (the local player) crashed one by one: level end, vehicle target,
+    scripted teleport. Single player passes the local player again, and the
+    handlers that dereferenced it unchecked were fixed. An audit of every
+    `EV_Activate` handler (140 of them) found the rest at once.
 17. **Keep the GL driver out of per-frame allocation.** Mesa 20.1's nouveau
     crashed in its suballocator under hundreds of `glBufferData` calls per
     frame. Reusing same-size storage was not enough. Carving blocks out of
@@ -383,6 +430,9 @@ The full reference is the Performance section of
 | `r_cacheProgramParms` | 1 | Parameter cache (no measured effect) |
 | `g_debugTriggers` | 0 | Logs trigger touches, rejections and bounds fallbacks |
 | `in_gyro` | 1 | 0 = off; 1 = always; 2 = only while aiming with ZL |
+| `r_shadows` | 0 | Stencil shadows; off by default on the Switch (much faster) |
+| `in_joystickInvertLook` | 0 | Invert the right stick's vertical look |
+| `com_switchSettings` | - | Internal: settings defaults version of the config |
 
 **How to measure:**
 
@@ -452,11 +502,18 @@ The order that worked here:
 
 ## 8. Pending
 
-- The items in section 0: the grandfather conversation, the Mesa 26 glitches
-  and the CPU clock.
-- Measure profile 3 against profile 4 (CPU 1224 against 1785 MHz) once the
-  clock sticks (`CPU clock check` in the log).
-- Render back end on its own thread (core 2), behind a cvar.
-- Carry the `Pvs.cpp` fix and the trigger fix over to OpenPrey-GameLibs.
-- Loading time: ~28 s is still images.
+- The items in section 0.
+- **Carry the game-code fixes over to OpenPrey-GameLibs** (`src/game` mirrors
+  it). Upstream PRs are optional. The fixes are:
+  - `Script_Program.cpp`: 64-bit vector parameters;
+  - `Script_Thread.cpp`: `sys.trigger` activator;
+  - `Misc.cpp`, `Item.cpp`, `Trigger.cpp`: NULL activators;
+  - `game_trigger.cpp` and `game_targets.cpp`: triggers and targets;
+  - `Pvs.cpp`;
+  - the `g_debugPlayerCanSee` diagnostics.
+- **Performance:**
+  - PGO training run and optimized build;
+  - the heavy front end in late feedingtowerb;
+  - render back end on its own thread.
+- **Loading:** first-visit texture compression on cores 1-2.
 - Audio: check which OpenAL Soft backend is used. Multiplayer: real sockets.

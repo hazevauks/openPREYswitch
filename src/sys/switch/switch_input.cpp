@@ -12,7 +12,8 @@ Windows SDL3 backend (src/sys/win32/win_sdl3.cpp), so binds carry over:
 	X = JOY5 (north)      Y = JOY6 (west)
 	D-pad up/down/right/left = JOY9..JOY12   L3 = JOY13   R3 = JOY14
 	ZR = JOY15 (right trigger)               ZL = JOY16 (left trigger)
-	+ = Escape (opens and closes the menu)   - = console key
+	+ = Escape (opens and closes the menu)
+	- = settings menu (switch_settings.cpp; Y there opens the console)
 
 Default binds for those keys are in s_defaultBinds: ZR fire, ZL alt fire, B jump,
 Y reload, X next weapon, A spirit walk, R grenade, L lighter, L3 sprint, R3 crouch
@@ -30,6 +31,9 @@ clicks. Clicking a text field (the savegame name) opens the system keyboard.
 
 While the console is down, A opens the system keyboard to type a command,
 the D-pad up/down walks the command history, L/R scroll, and B or - close it.
+
+While the settings menu is open it takes every button: the D-pad and A change
+settings, B, - or + close it, Y opens the console. Sticks, touch and gyro rest.
 
 ===========================================================================
 */
@@ -49,6 +53,7 @@ the D-pad up/down walks the command history, L/R scroll, and B or - close it.
 static idCVar in_joystick( "in_joystick", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "enable joystick/gamepad input" );
 static idCVar in_joystickDeadZone( "in_joystickDeadZone", "0.18", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "joystick axis dead zone", 0.0f, 0.95f );
 static idCVar in_menuCursorSpeed( "in_menuCursorSpeed", "14", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "menu cursor speed for the left stick, in pixels per frame at full tilt", 1.0f, 60.0f );
+static idCVar in_joystickInvertLook( "in_joystickInvertLook", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL, "invert the right stick's vertical look" );
 
 static const int SWITCH_SCREEN_WIDTH	= 1280;
 static const int SWITCH_SCREEN_HEIGHT	= 720;
@@ -90,7 +95,8 @@ static bool							s_touchDown = false;
 typedef enum {
 	INPUT_MODE_GAME,
 	INPUT_MODE_MENU,		// a GUI is active
-	INPUT_MODE_CONSOLE		// the console is down
+	INPUT_MODE_CONSOLE,		// the console is down
+	INPUT_MODE_SETTINGS		// the settings menu is open (switch_settings.cpp)
 } switchInputMode_t;
 
 static switchInputMode_t	s_inputMode = INPUT_MODE_GAME;
@@ -99,6 +105,7 @@ static switchInputMode_t	s_inputMode = INPUT_MODE_GAME;
 static const int KEY_NONE				= 0;
 static const int KEY_CONSOLE_TOGGLE		= -1;	// posts the console key
 static const int KEY_SOFTWARE_KEYBOARD	= -2;	// opens the system keyboard for a console command
+static const int KEY_SETTINGS_MENU		= -3;	// opens the settings menu
 
 typedef struct {
 	u64		button;
@@ -115,7 +122,7 @@ static const switchButtonMap_t s_buttonMap[] = {
 	{ HidNpadButton_X,			K_JOY5,				KEY_NONE,		KEY_NONE },
 	{ HidNpadButton_Y,			K_JOY6,				KEY_NONE,		KEY_NONE },
 	{ HidNpadButton_Plus,		K_ESCAPE,			KEY_NONE,		KEY_NONE },
-	{ HidNpadButton_Minus,		KEY_CONSOLE_TOGGLE,	KEY_NONE,		KEY_CONSOLE_TOGGLE },
+	{ HidNpadButton_Minus,		KEY_SETTINGS_MENU,	KEY_NONE,		KEY_CONSOLE_TOGGLE },
 	{ HidNpadButton_Up,			K_JOY9,				K_UPARROW,		K_UPARROW },
 	{ HidNpadButton_Down,		K_JOY10,			K_DOWNARROW,	K_DOWNARROW },
 	{ HidNpadButton_Right,		K_JOY11,			K_RIGHTARROW,	KEY_NONE },
@@ -348,7 +355,37 @@ static int Switch_KeyForMode( const switchButtonMap_t &map ) {
 	}
 }
 
+// buttons of the settings menu; it acts on presses and posts no keys
+static const struct {
+	u64					button;
+	settingsButton_t	action;
+} s_settingsButtons[] = {
+	{ HidNpadButton_Up,		SETTINGS_UP },
+	{ HidNpadButton_Down,	SETTINGS_DOWN },
+	{ HidNpadButton_Left,	SETTINGS_LEFT },
+	{ HidNpadButton_Right,	SETTINGS_RIGHT },
+	{ HidNpadButton_A,		SETTINGS_ACCEPT },
+	{ HidNpadButton_B,		SETTINGS_BACK },
+	{ HidNpadButton_Minus,	SETTINGS_BACK },
+	{ HidNpadButton_Plus,	SETTINGS_BACK },
+	{ HidNpadButton_Y,		SETTINGS_CONSOLE },
+};
+
+static void Switch_UpdateSettingsButtons( u64 held ) {
+	const u64 pressed = held & ~s_buttonsDown;
+	s_buttonsDown = held;
+	for ( size_t i = 0; i < sizeof( s_settingsButtons ) / sizeof( s_settingsButtons[0] ); i++ ) {
+		if ( ( pressed & s_settingsButtons[i].button ) && Switch_SettingsMenuActive() ) {
+			Switch_SettingsMenuButton( s_settingsButtons[i].action );
+		}
+	}
+}
+
 static void Switch_UpdateButtons( u64 held ) {
+	if ( s_inputMode == INPUT_MODE_SETTINGS ) {
+		Switch_UpdateSettingsButtons( held );
+		return;
+	}
 	const u64 changed = held ^ s_buttonsDown;
 	if ( !changed ) {
 		return;
@@ -362,6 +399,9 @@ static void Switch_UpdateButtons( u64 held ) {
 			int key = Switch_KeyForMode( map );
 			if ( key == KEY_SOFTWARE_KEYBOARD ) {
 				Switch_ConsoleKeyboard();
+				key = KEY_NONE;
+			} else if ( key == KEY_SETTINGS_MENU ) {
+				Switch_OpenSettingsMenu();
 				key = KEY_NONE;
 			} else if ( key == KEY_CONSOLE_TOGGLE ) {
 				key = Sys_GetConsoleKey( false );
@@ -455,7 +495,10 @@ static void Switch_UpdateGameAxes( const HidAnalogStickState &left, const HidAna
 	const int moveX = Switch_NormalizeStick( left.x, deadZone );
 	const int moveY = Switch_NormalizeStick( left.y, deadZone );		// HID y is already up-positive
 	const int lookX = Switch_NormalizeStick( right.x, deadZone );
-	const int lookY = -Switch_NormalizeStick( right.y, deadZone );	// match SDL's down-positive look axis
+	int lookY = -Switch_NormalizeStick( right.y, deadZone );		// match SDL's down-positive look axis
+	if ( in_joystickInvertLook.GetBool() ) {
+		lookY = -lookY;
+	}
 
 	Sys_EnterCriticalSection( CRITICAL_SECTION_ONE );
 	s_joystickAxisState[AXIS_SIDE] = lookX;
@@ -479,9 +522,16 @@ void Switch_PollInput( void ) {
 
 	padUpdate( &s_pad );
 
+	// a map load started with the settings menu open (e.g. from a script)
+	if ( Switch_SettingsMenuActive() && Switch_IsLoading() ) {
+		Switch_CloseSettingsMenu( false );
+	}
+
 	idUserInterface *gui = Switch_ActiveGUI();
 	switchInputMode_t mode = INPUT_MODE_GAME;
-	if ( console && console->Active() ) {
+	if ( Switch_SettingsMenuActive() ) {
+		mode = INPUT_MODE_SETTINGS;
+	} else if ( console && console->Active() ) {
 		mode = INPUT_MODE_CONSOLE;
 	} else if ( gui != NULL ) {
 		mode = INPUT_MODE_MENU;

@@ -417,6 +417,10 @@ void Sys_SetLoadingBoost( bool enable ) {
 	}
 }
 
+bool Switch_IsLoading( void ) {
+	return s_loadingBoostDepth > 0;
+}
+
 void Switch_ApplyPerformanceProfile( void ) {
 	const int profile = idMath::ClampInt( 0, NUM_PERF_PROFILES - 1, r_switchPerfProfile.GetInteger() );
 	s_appliedPerfProfile = profile;
@@ -854,6 +858,7 @@ static void *Switch_EngineThread( void * ) {
 	common->Init( args.Num(), args.Ptr(), NULL );
 	Sys_SetLoadingBoost( false );
 	Switch_ApplyDefaultBinds();
+	Switch_ApplySettingsDefaults();
 	Switch_ApplyPerformanceProfile();
 
 	common->Printf( "%d MB System Memory\n", Sys_GetSystemRam() );
@@ -885,6 +890,37 @@ static void *Switch_EngineThread( void * ) {
 	return NULL;
 }
 
+#ifdef OPENPREY_PGO_GENERATE
+/*
+================
+Profile-guided optimization, instrumented build (meson -Dswitch_pgo=generate)
+
+At exit libgcov writes one .gcda per object file, named
+<-fprofile-generate dir><separator><object path relative to the build dir,
+with '/' mangled to '#'>. devkitA64's GCC runs on Windows and puts a
+backslash in the separator place, which the SD card cannot store, so fopen is
+wrapped (-Wl,--wrap=fopen) to turn it into '/'. The files then land in
+sdmc:/switch/openprey/pgo/, to be copied into .tmp/pgo-data for
+-Dswitch_pgo=use (docs-dev/switch-port.md, "LTO and PGO").
+================
+*/
+#define SWITCH_PGO_PATH		SWITCH_BASE_PATH "/pgo"
+
+extern "C" FILE *__real_fopen( const char *path, const char *mode );
+
+extern "C" FILE *__wrap_fopen( const char *path, const char *mode ) {
+	static const char pgoPrefix[] = SWITCH_PGO_PATH "\\";
+	const size_t prefixLength = sizeof( pgoPrefix ) - 1;
+	if ( path != NULL && idStr::Cmpn( path, pgoPrefix, (int)prefixLength ) == 0 ) {
+		char fixed[1024];
+		idStr::Copynz( fixed, path, sizeof( fixed ) );
+		fixed[prefixLength - 1] = '/';
+		return __real_fopen( fixed, mode );
+	}
+	return __real_fopen( path, mode );
+}
+#endif
+
 int main( int argc, char **argv ) {
 	s_argc = argc;
 	s_argv = argv;
@@ -900,6 +936,9 @@ int main( int argc, char **argv ) {
 
 	mkdir( SWITCH_BASE_PATH, 0777 );
 	chdir( SWITCH_BASE_PATH );
+#ifdef OPENPREY_PGO_GENERATE
+	mkdir( SWITCH_PGO_PATH, 0777 );		// libgcov does not create directories here
+#endif
 
 	// set the time base
 	Sys_Milliseconds();

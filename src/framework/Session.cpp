@@ -36,6 +36,10 @@ If you have questions concerning this license or the applicable additional terms
 
 extern glconfig_t	glConfig;
 
+#ifdef __SWITCH__
+void Switch_DrawSettingsMenu( void );	// src/sys/switch/switch_settings.cpp
+#endif
+
 idCVar	idSessionLocal::com_showAngles( "com_showAngles", "0", CVAR_SYSTEM | CVAR_BOOL, "" );
 idCVar	idSessionLocal::com_minTics( "com_minTics", "1", CVAR_SYSTEM, "" );
 idCVar	idSessionLocal::com_showTics( "com_showTics", "0", CVAR_SYSTEM | CVAR_BOOL, "" );
@@ -3326,6 +3330,11 @@ void idSessionLocal::Draw() {
 	if ( !fullConsole ) {
 		console->Draw( false );
 	}
+
+#ifdef __SWITCH__
+	// OpenPrey: the Switch settings menu goes over everything (src/sys/switch/switch_settings.cpp)
+	Switch_DrawSettingsMenu();
+#endif
 }
 
 /*

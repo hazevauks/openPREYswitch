@@ -45,6 +45,11 @@ ninja -C builddir-switch -k 0
 
 `builddir-switch/` is kept separate from the host `builddir/`.
 
+The cross file turns on link-time optimization (`b_lto`, 4 threads). Every
+rebuild then relinks everything, about 10 minutes on the development PC even
+for a one-file change. For quick iterations a separate dir with
+`-Db_lto=false` works. Profile-guided optimization is covered in "LTO and PGO".
+
 The result is `builddir-switch/OpenPrey.nro`. Useful partial targets:
 
 - `ninja -C builddir-switch libopenprey_game_idlib.a`
@@ -153,8 +158,39 @@ zoom (toggle), down center view, right/left next/previous weapon. Schemes are
 versioned (`in_switchControlScheme`): on upgrade, keys still holding the previous
 default move to the new one.
 
-**-** toggles the console. While it is down, **A** opens the system keyboard to type
-a command, D-pad up/down walks the history, L/R scroll, and **B** or **-** close it.
+**-** opens the settings menu (below). Its **Y** opens the console. While the
+console is down, **A** opens the system keyboard to type a command, D-pad up/down
+walks the history, L/R scroll, and **B** or **-** close it.
+
+### Settings menu
+
+`src/sys/switch/switch_settings.cpp` draws a settings overlay itself, so no
+retail GUI file is changed or shipped. **-** opens and closes it:
+
+- during play it also opens Prey's pause menu, so the game waits behind it,
+  and closing it returns to the game;
+- it does not go through Escape, which would skip a cutscene;
+- D-pad up/down selects, left/right or **A** change the value, **B**/**-**/**+**
+  close, **Y** opens the console.
+
+Every change applies at once and is saved with the config (archived cvars).
+
+| Item | cvar | Values |
+|---|---|---|
+| Show FPS | `com_showFPS` | Off / On |
+| Frame rate lock | `r_fpsLock` | 30 fps / Off |
+| Shadows | `r_shadows` | Off / On |
+| Dynamic resolution | `r_dynamicResolution` | Off / On |
+| GPU clock profile | `r_switchPerfProfile` | System default, GPU 384 MHz, GPU 460 MHz, GPU 460 + RAM 1600 |
+| Gyro aiming | `in_gyro` | Off / Always / While aiming (ZL) |
+| Gyro sensitivity | `in_gyroSensitivityX` and `Y` | 0.25 to 6.0 |
+| Look speed | `in_yawspeed` and `in_pitchspeed` | 60 to 400 degrees per second at full tilt |
+| Invert look | `in_joystickInvertLook` | Off / On (right stick, vertical) |
+| Subtitles | `g_subtitles` | Off / On |
+
+**Settings defaults** are versioned like the control scheme
+(`com_switchSettings`, `s_settingsDefaults`). An entry applies once to configs
+saved before it existed, so later choices stick. Version 1 turns shadows off.
 
 ### Gyro aiming
 
@@ -186,6 +222,7 @@ given; the reasoning behind each setting is in the source comment next to it.
 |---|---|---|
 | `r_switchPerfProfile` | 3 | Clock profile, official handheld configurations: 0 = system default (GPU 307.2 MHz), 1 = GPU 384, 2 = GPU 460.8, 3 = GPU 460.8 + EMC 1600. The CPU clock is left to overclocking tools. Restored on exit. |
 | `r_vertexPages` | 1 | Vertex cache blocks are carved out of shared 8 MB buffers, so the driver does not allocate per block (see "Vertex buffer churn, vertex pages and shadows"). Read at startup. |
+| `r_shadows` | 0 | Stencil shadows, off by default on the Switch (see "Vertex buffer churn, vertex pages and shadows"). Applied once to older configs through `com_switchSettings`. |
 | `r_switchGLThread` | 1 | Mesa 26 build only: runs the GL driver on its own thread (core 2). Applies on `vid_restart`. |
 | `r_fpsLock` | 30 | Holds frames 33.3 ms apart (0 = off). |
 | `r_dynamicResolution` | 1 | 3D resolution follows the frame time (`r_dynamicResolutionFPS` 30, `r_dynamicResolutionMin` 50, `r_renderScale` max). |
@@ -395,8 +432,7 @@ Hardware numbers in the same scene (2026-09-29 log): shadows on, back end
 
 ### LTO and PGO
 
-Evaluated on 2026-09-30. The release build is `-O3`, without link-time or
-profile-guided optimization.
+Evaluated on 2026-09-30.
 
 **What they can reach.** Both only optimize code we compile:
 
@@ -407,18 +443,13 @@ profile-guided optimization.
 On hardware the back end dominates heavy scenes (33-50 ms in feedingtowera
 with shadows, ~40 µs of driver CPU per draw in the bar). Game plus front end
 are 5-20 ms. Typical gains for game engines are a few percent from LTO and
-5-15% from PGO on the code they cover, which is around 1-3 ms per frame here.
-Driver overhead and GPU fill are untouched.
+5-15% from PGO on the code they cover.
 
-**LTO works** (`-Db_lto=true`):
-
-```sh
-meson setup builddir-switch-lto --cross-file tools/switch/meson/switch-cross.ini \
-    -Dbuildtype=release -Db_lto=true -Db_lto_threads=4 -Dswitch_variant=lto
-```
-
-That gives `OpenPrey-lto.nro`, 16.3 MB against 15.3 MB, because of more
-inlining. Two things had to be fixed:
+**LTO is the default** (`b_lto` in the cross file). On hardware (2026-09-30,
+shadows off, CPU 1224 MHz through Horizon-OC), the LTO build held 30 fps
+through the opening maps, dipping to 25. The plain `-O3` build dropped below
+that in the same places. The NRO is 16.3 MB instead of 15.3 MB, because of
+more inlining. Two things had to be fixed:
 
 - **The game module.** It is prelinked into one relocatable object whose
   symbols `objcopy` localizes (`tools/switch/make_game_object.py`). Under LTO
@@ -436,31 +467,64 @@ the final symbol is 32 KB, as defined in `switch_main.cpp`.
 
 Costs:
 
-- every rebuild relinks everything, ~10 minutes on this PC even for a
-  one-file change;
-- inlining makes crash backtraces coarser.
+- every rebuild relinks everything, ~10 minutes even for a one-file change;
+- inlining makes crash backtraces coarser. `addr2line` still names the
+  functions.
 
-It stays a separate variant until an A/B test on hardware shows a gain. To
-test, play the same spot with `com_logPerf 1` on `OpenPrey.nro` and
-`OpenPrey-lto.nro`, and compare game, front and back.
+**PGO** (`-Dswitch_pgo`). An instrumented build records which code runs and
+how often while someone plays. A second build uses that profile to lay out
+and inline the hot paths.
 
-**PGO is possible but not done.** devkitA64 ships `libgcov`, and the game exits
-through `exit()` on the main thread, where the profile is written. It would
-take:
+1. **Instrumented build:**
 
-1. an instrumented build (`-fprofile-generate -fprofile-update=atomic`, since
-   several threads run engine code), which runs slower;
-2. `GCOV_PREFIX` / `GCOV_PREFIX_STRIP` set at startup (`setenv`), so the
-   `.gcda` files, named after host paths, land on the SD card;
-3. a representative play session ending with a clean quit from the menu;
-4. copying the `.gcda` tree back into the build dir, then
-   `-fprofile-use -fprofile-partial-training -fprofile-correction`.
+   ```sh
+   meson setup builddir-switch-pgo --cross-file tools/switch/meson/switch-cross.ini \
+       -Dbuildtype=release -Dswitch_pgo=generate -Dswitch_variant=pgo
+   ninja -C builddir-switch-pgo
+   ```
 
-The profile has to be redone whenever the code changes much. The larger CPU
-lever is the driver: Mesa 20.1 built from source
+   It gives `OpenPrey-pgo.nro`, which runs slower than the release build.
+2. **Training run:**
+   - play a representative session (menus, a map load, combat, walking
+     through busy areas);
+   - quit from the game's menu. The profiles are written at a clean exit;
+     a crash or closing from HOME without quitting writes nothing.
+   - one `.gcda` per object lands in `sdmc:/switch/openprey/pgo/`.
+3. **Copy the profiles:** copy that folder's files to `.tmp/pgo-data/` in the
+   repository.
+4. **Optimized build:**
+
+   ```sh
+   meson configure builddir-switch-pgo -Dswitch_pgo=use -Dswitch_variant=pgo-use
+   ninja -C builddir-switch-pgo
+   ```
+
+   `switch_pgo_data` points elsewhere if the profiles are not in
+   `.tmp/pgo-data/`.
+
+How the profile files are named and found:
+
+- **Names:** `-fprofile-generate=<dir>` and `-fprofile-prefix-path=<build dir>`
+  name each file after its object path relative to the build dir, with `/`
+  turned into `#` (for example `OpenPrey-client_arm64.elf.p#src_renderer_VertexCache.cpp.gcda`).
+  So the files do not depend on where the build dir is. The prefix must be
+  spelled as the compiler's working directory, in Windows form under MSYS2
+  (`cygpath -w` in meson.build).
+- **Separator:** devkitA64's GCC runs on Windows and joins the directory and
+  the name with a backslash. The instrumented build wraps `fopen`
+  (`-Wl,--wrap=fopen`, `OPENPREY_PGO_GENERATE` in `switch_main.cpp`) to turn
+  it into `/`, and creates the `pgo` folder at startup, because libgcov
+  creates no directories here.
+- **Threads:** `-fprofile-update=prefer-atomic` keeps counters right when
+  several threads run engine code.
+- **Optimized build:** `-fprofile-partial-training` keeps code the session did
+  not reach optimized normally. `-fprofile-correction` accepts small
+  inconsistencies.
+
+The profile has to be redone when the code changes much. The next CPU lever is
+the driver: Mesa 20.1 built from source
 ([tools/switch/mesa20](../tools/switch/mesa20/README.md)) could itself be
-built with LTO/PGO. That comes after the vertex pages have removed the
-per-block allocation overhead.
+built with LTO/PGO.
 
 ### Mesa 26 experiment
 
@@ -539,17 +603,19 @@ it too.
 
 ## Next steps
 
-1. **Front end in heavy scenes:** late feedingtowerb ran at 6-7 fps with a
+1. **PGO:** a training run with `OpenPrey-pgo.nro`, then the optimized build
+   (see "LTO and PGO"). Compare it with the LTO build at the same spots.
+2. **Front end in heavy scenes:** late feedingtowerb ran at 6-7 fps with a
    60-120 ms front end. Read the `hitch front end:` lines from that spot, then
    optimize what dominates: subviews, CPU skinning (NEON SIMD), or
    interactions. Vertex pages were confirmed on hardware on 2026-09-30: no
    crash, every block paged, heap stable.
-2. **Loading:** compress first-visit textures on cores 1-2.
-3. **Render back end on its own core** (SMP), so game + front end and back end
+3. **Loading:** compress first-visit textures on cores 1-2.
+4. **Render back end on its own core** (SMP), so game + front end and back end
    overlap instead of adding up. The vertex cache already has a CPU-memory mode
    for that. GLthread would cover part of this.
-4. **Native renderer (deko3d)**, only if the above cannot reach 30 fps. It is the
+5. **Native renderer (deko3d)**, only if the above cannot reach 30 fps. It is the
    path to Zcull, compressed render targets and low CPU overhead, and a large
    project.
-5. **Audio:** check which OpenAL Soft backend the devkitPro build uses.
-6. **Multiplayer:** real sockets in `switch_net.cpp`.
+6. **Audio:** check which OpenAL Soft backend the devkitPro build uses.
+7. **Multiplayer:** real sockets in `switch_net.cpp`.

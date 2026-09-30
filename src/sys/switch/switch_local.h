@@ -19,6 +19,8 @@ void		Switch_QueEvent( sysEventType_t type, int value, int value2, int ptrLength
 
 // CPU boost while loading (switch_main.cpp); calls nest.
 void		Sys_SetLoadingBoost( bool enable );
+// True while the engine or a map is loading (inside Sys_SetLoadingBoost).
+bool		Switch_IsLoading( void );
 // Clock profile (r_switchPerfProfile, switch_main.cpp). Check runs once per
 // Sys_GenerateEvents and applies the profile when the cvar changed.
 void		Switch_ApplyPerformanceProfile( void );
@@ -38,6 +40,26 @@ void		Switch_PollInput( void );
 void		Switch_ApplyDefaultBinds( void );
 // Queues a relative mouse move (M_DELTAX/M_DELTAY) for idUsercmdGen (switch_input.cpp).
 void		Switch_QueueMouseDelta( int dx, int dy );
+
+// Settings menu (switch_settings.cpp), engine thread only. While it is open,
+// switch_input.cpp sends it every button; idSessionLocal::Draw draws it.
+typedef enum {
+	SETTINGS_UP,
+	SETTINGS_DOWN,
+	SETTINGS_LEFT,
+	SETTINGS_RIGHT,
+	SETTINGS_ACCEPT,
+	SETTINGS_BACK,
+	SETTINGS_CONSOLE
+} settingsButton_t;
+bool		Switch_SettingsMenuActive( void );
+void		Switch_OpenSettingsMenu( void );
+// resumeGame: also close the pause menu the settings menu opened.
+void		Switch_CloseSettingsMenu( bool resumeGame );
+void		Switch_SettingsMenuButton( settingsButton_t button );
+void		Switch_DrawSettingsMenu( void );
+// Applies settings defaults newer than the saved config. Call after common->Init.
+void		Switch_ApplySettingsDefaults( void );
 
 // Gyro aiming (switch_gyro.cpp). Switch_UpdateGyro runs once per input poll on the
 // engine thread: gameplay tells it whether look input is live, whether the aim

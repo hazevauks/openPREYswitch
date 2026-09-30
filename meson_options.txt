@@ -56,6 +56,21 @@ option(
 )
 
 option(
+  'switch_pgo',
+  type: 'combo',
+  choices: ['off', 'generate', 'use'],
+  value: 'off',
+  description: 'Nintendo Switch only: profile-guided optimization. generate = instrumented build that writes profiles to sdmc:/switch/openprey/pgo on exit; use = build with the profiles in switch_pgo_data. See docs-dev/switch-port.md, "LTO and PGO".',
+)
+
+option(
+  'switch_pgo_data',
+  type: 'string',
+  value: '',
+  description: 'Nintendo Switch only: folder with the .gcda profiles copied from the SD card, for switch_pgo=use. Empty = <source>/.tmp/pgo-data.',
+)
+
+option(
   'switch_variant',
   type: 'string',
   value: '',

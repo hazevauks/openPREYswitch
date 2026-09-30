@@ -1049,7 +1049,7 @@ idItemRemover::Event_Trigger
 ================
 */
 void idItemRemover::Event_Trigger( idEntity *activator ) {
-	if ( activator->IsType( idPlayer::Type ) ) {
+	if ( activator && activator->IsType( idPlayer::Type ) ) {
 		RemoveItem( static_cast<idPlayer *>(activator) );
 	}
 }
