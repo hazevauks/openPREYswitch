@@ -393,6 +393,75 @@ read after it was overwritten. Pages give the same saving without that risk.
 Hardware numbers in the same scene (2026-09-29 log): shadows on, back end
 33-50 ms at 15-20 fps; shadows off, back end 17-22 ms at 25-28 fps.
 
+### LTO and PGO
+
+Evaluated on 2026-09-30. The release build is `-O3`, without link-time or
+profile-guided optimization.
+
+**What they can reach.** Both only optimize code we compile:
+
+- game logic, the render front end, and the engine's share of the back end;
+- not Mesa or libdrm_nouveau, which come prebuilt from devkitPro (`-O2`);
+- not GPU time.
+
+On hardware the back end dominates heavy scenes (33-50 ms in feedingtowera
+with shadows, ~40 µs of driver CPU per draw in the bar). Game plus front end
+are 5-20 ms. Typical gains for game engines are a few percent from LTO and
+5-15% from PGO on the code they cover, which is around 1-3 ms per frame here.
+Driver overhead and GPU fill are untouched.
+
+**LTO works** (`-Db_lto=true`):
+
+```sh
+meson setup builddir-switch-lto --cross-file tools/switch/meson/switch-cross.ini \
+    -Dbuildtype=release -Db_lto=true -Db_lto_threads=4 -Dswitch_variant=lto
+```
+
+That gives `OpenPrey-lto.nro`, 16.3 MB against 15.3 MB, because of more
+inlining. Two things had to be fixed:
+
+- **The game module.** It is prelinked into one relocatable object whose
+  symbols `objcopy` localizes (`tools/switch/make_game_object.py`). Under LTO
+  that object held bytecode that `objcopy` cannot localize, and the final link
+  failed on 1349 duplicate idlib symbols. With `--lto` (passed when `b_lto` is
+  on), the prelink runs the optimizer and emits machine code
+  (`-flinker-output=nolto-rel`). The game is then its own LTO unit, as a DLL
+  is, and the engine is another.
+- **An ODR violation.** Two different `clipTri_t` structs existed, in
+  `Interaction.cpp` and `tr_stencilshadow.cpp`. The first is now in an
+  anonymous namespace.
+
+A remaining linker note about the size of `__nx_exception_stack` is harmless:
+the final symbol is 32 KB, as defined in `switch_main.cpp`.
+
+Costs:
+
+- every rebuild relinks everything, ~10 minutes on this PC even for a
+  one-file change;
+- inlining makes crash backtraces coarser.
+
+It stays a separate variant until an A/B test on hardware shows a gain. To
+test, play the same spot with `com_logPerf 1` on `OpenPrey.nro` and
+`OpenPrey-lto.nro`, and compare game, front and back.
+
+**PGO is possible but not done.** devkitA64 ships `libgcov`, and the game exits
+through `exit()` on the main thread, where the profile is written. It would
+take:
+
+1. an instrumented build (`-fprofile-generate -fprofile-update=atomic`, since
+   several threads run engine code), which runs slower;
+2. `GCOV_PREFIX` / `GCOV_PREFIX_STRIP` set at startup (`setenv`), so the
+   `.gcda` files, named after host paths, land on the SD card;
+3. a representative play session ending with a clean quit from the menu;
+4. copying the `.gcda` tree back into the build dir, then
+   `-fprofile-use -fprofile-partial-training -fprofile-correction`.
+
+The profile has to be redone whenever the code changes much. The larger CPU
+lever is the driver: Mesa 20.1 built from source
+([tools/switch/mesa20](../tools/switch/mesa20/README.md)) could itself be
+built with LTO/PGO. That comes after the vertex pages have removed the
+per-block allocation overhead.
+
 ### Mesa 26 experiment
 
 [danfromtico/mesa-switch](https://github.com/danfromtico/mesa-switch) 26.2.2 NVC0 was

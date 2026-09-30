@@ -37,6 +37,7 @@ if build_games
       command: [
         py,
         meson.project_source_root() / 'tools' / 'switch' / 'make_game_object.py',
+        get_option('b_lto') ? ['--lto'] : [],
         '@OUTPUT@',
         find_program('objcopy', required: true),
         meson.get_compiler('cpp').cmd_array(),

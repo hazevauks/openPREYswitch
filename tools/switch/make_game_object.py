@@ -15,8 +15,13 @@ script:
 COMDAT groups are dissolved in step 1 so the game's private copies of inline
 functions and vtables never replace the engine's at the final link.
 
+With --lto (meson b_lto), step 1 runs the link-time optimizer over the game
+and emits machine code (-flinker-output=nolto-rel): objcopy cannot localize
+symbols of LTO bytecode, and the final link would see the game's idlib as
+duplicates of the engine's. The game is then its own LTO unit, as a DLL is.
+
 Usage:
-  make_game_object.py <output.o> <objcopy> <c++ compiler...> -- <archive.a...>
+  make_game_object.py [--lto] <output.o> <objcopy> <c++ compiler...> -- <archive.a...>
 """
 
 from __future__ import annotations
@@ -29,6 +34,9 @@ EXPORTED_SYMBOL = "GetGameAPI"
 
 
 def main(argv: list[str]) -> int:
+    lto = bool(argv) and argv[0] == "--lto"
+    if lto:
+        argv = argv[1:]
     if "--" not in argv or len(argv) < 5:
         print(__doc__, file=sys.stderr)
         return 2
@@ -47,6 +55,7 @@ def main(argv: list[str]) -> int:
         # groups, the final link would keep the game's localized copy of a group
         # and discard the engine's, leaving engine references unresolved.
         "-Wl,--force-group-allocation",
+        *(["-flto=auto", "-flinker-output=nolto-rel"] if lto else []),
         "-Wl,--whole-archive",
         *archives,
         "-Wl,--no-whole-archive",

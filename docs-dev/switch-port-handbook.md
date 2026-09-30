@@ -92,6 +92,18 @@ section and the lesson goes to section 5.
 - **Test:** in the save menu, click the name field with A, type a name, and
   save.
 
+### LTO build (A/B test pending)
+
+- **Asked by a friend of the user (2026-09-30):** evaluate LTO and PGO.
+- **LTO builds and links** as `OpenPrey-lto.nro` (`builddir-switch-lto/`,
+  `-Db_lto=true`). It needed an LTO mode in `make_game_object.py` and an ODR
+  fix. PGO is feasible but not done; see switch-port.md, "LTO and PGO".
+- **Expected gain is small:** it covers only our CPU code (game, front end),
+  not Mesa or the GPU.
+- **Test:** at the same spot, `com_logPerf 1` on `OpenPrey.nro` and on
+  `OpenPrey-lto.nro`; compare fps, game, front and back. Make it the default
+  only if the gain is clear and nothing breaks.
+
 ### Rendering glitches in the Mesa 26 build (parked)
 
 - The user decided not to test Mesa 26 again. OpenPrey now works with Mesa
@@ -137,7 +149,7 @@ section and the lesson goes to section 5.
 | `/opt/devkitpro` path | Mapped in `devkitPro\msys2\etc\fstab`. Backup: `fstab.bak-antes-openprey`. If the devkitPro folder moves, fix that line. |
 | Python | Windows Python is not installed. Use `devkitPro/msys2/usr/bin/python3.exe`. |
 | Cross file | `tools/switch/meson/switch-cross.ini` (`host_machine.system = 'horizon'`, `-D__SWITCH__`) |
-| Build dirs | `builddir-switch/` (main), `builddir-switch-mesa26/` (Mesa 26 experiment), `builddir-switch-mesa20/` (Mesa 20.1 built from source) |
+| Build dirs | `builddir-switch/` (main), `builddir-switch-mesa26/` (Mesa 26 experiment), `builddir-switch-mesa20/` (Mesa 20.1 built from source), `builddir-switch-lto/` (LTO variant) |
 
 ### Building
 
