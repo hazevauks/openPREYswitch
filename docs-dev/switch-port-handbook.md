@@ -26,8 +26,8 @@ section and the lesson goes to section 5.
   into feedingtowerc on Prey's own collision: through the pod room (both
   mutilated there), the pod tunnel and on to the Leech Gun area, where a
   hunter's grenade killed Tommy in a normal fight. The log was clean.
-- **First release:** the game is playable through these maps. The next
-  updates focus on performance.
+- **First release (v0.1.0):** the game is playable through these maps. The
+  next updates focus on performance.
 
 **Solved and confirmed on hardware (2026-10-01):**
 
@@ -251,6 +251,13 @@ MSYSTEM=MSYS <devkitPro>/msys2/usr/bin/bash.exe -lc "cd <repo> && export MESON_R
 The root `README.md` is the release page: installation, controls, tips,
 known issues and support. Keep its known issues in step with section 0.
 
+The version lives in `meson.build` (`project(..., version:)`, which the NRO's
+homebrew entry and the zip name use), `src/framework/licensee.h`
+(`PROJECT_VERSION`, in the log and the console), `src/sys/AutoVersion.h`
+(Windows resources) and `AGENTS.md`. Changing `licensee.h` rebuilds almost
+everything (it is in the precompiled header). Savegames do not depend on it
+(`SAVEGAME_VERSION` is separate). First release: v0.1.0, on 2026-10-01.
+
 1. Merge `switch-port` into `main`.
 2. Build from `main` and archive the ELF, as above.
 3. Package: `python3 tools/switch/package_release.py` writes
@@ -259,7 +266,9 @@ known issues and support. Keep its known issues in step with section 0.
 4. Test the zip as a player would: extract it into an empty SD card folder,
    add the `.pk4` files, and start through title override.
 5. Tag the commit `v<version>` and publish a GitHub release with the zip, the
-   changes and the known issues.
+   changes and the known issues. Publish it as a regular release, not a
+   pre-release: the README's download link is `releases/latest`, which skips
+   pre-releases.
 
 ## 3. Testing on the console
 

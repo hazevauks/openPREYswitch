@@ -26,7 +26,7 @@ in [switch-port-handbook.md](switch-port-handbook.md).
 2. From the devkitPro MSYS2 shell, install the libraries and the host build tools:
 
    ```sh
-   pacman -S --needed switch-sdl2 switch-mesa switch-libdrm_nouveau switch-glad \
+   pacman -S --needed switch-sdl2 switch-mesa switch-libdrm_nouveau \
        switch-openal-soft switch-zlib meson ninja python
    ```
 

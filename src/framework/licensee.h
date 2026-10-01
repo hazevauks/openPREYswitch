@@ -12,7 +12,7 @@
 #define PROJECT_NAME					"OpenPrey"
 #define PROJECT_AUTHOR					"themuffinator"
 #define PROJECT_COMPANY				"DarkMatter Productions"
-#define PROJECT_VERSION				"0.0.1"
+#define PROJECT_VERSION				"0.1.0"
 #define PROJECT_WEBSITE				"www.darkmatter-quake.com"
 #define PROJECT_REPO					"https://github.com/themuffinator/OpenPrey"
 

@@ -250,7 +250,7 @@ openPREY is built with [devkitPro](https://devkitpro.org/wiki/Getting_Started)
 selected, then add the libraries and build tools from its MSYS2 shell:
 
 ```sh
-pacman -S --needed switch-sdl2 switch-mesa switch-libdrm_nouveau switch-glad \
+pacman -S --needed switch-sdl2 switch-mesa switch-libdrm_nouveau \
     switch-openal-soft switch-zlib meson ninja python
 ```
 

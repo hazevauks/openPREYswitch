@@ -6,7 +6,7 @@ This file describes project goals, rules, and workflow expectations for anyone w
 - Name: OpenPrey
 - Author: themuffinator
 - Company: DarkMatter Productions
-- Version: 0.0.1
+- Version: 0.1.0
 - Repository: `https://github.com/themuffinator/OpenPrey`
 - Companion GameLibs Repo (local): `E:\Repositories\OpenPrey-GameLibs`
 
