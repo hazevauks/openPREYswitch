@@ -131,6 +131,7 @@ void hhSafeDeathVolume::Event_Touch( idEntity *other, trace_t *trace ) {
 	if( player->IsSpiritOrDeathwalking() ) {
 		player->StopSpiritWalk();
 	} else {
+		gameLocal.Printf( "death volume '%s' kills the player\n", GetName() );	// OpenPrey: death report
 		player->Kill( false, false );
 	}
 }

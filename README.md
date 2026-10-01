@@ -200,6 +200,9 @@ dipping to about 25 in the busiest moments.
 
 ## Known issues
 
+- **Tommy dies in the small tunnel under the pod hole in `game/feedingtowerc`.**
+  This is being investigated. If it happens to you, the log of that session
+  (`switch/openprey/basepr/logs/openprey.log`) says what killed him.
 - **No Deathwalk.** When Tommy dies he does not go to the Deathwalk; the game
   continues from the last save. The engine does not load Prey's deathwalk level yet.
 - **Long first loads** of each map while its texture cache is built (see

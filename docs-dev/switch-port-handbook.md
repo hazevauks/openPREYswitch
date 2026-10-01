@@ -43,7 +43,57 @@ section and the lesson goes to section 5.
   released 351 MB of sounds and 290 MB of images, and the heap went from
   1697 to 1149 MB in use.
 
-### Walking through walls and falling out of feedingtowerc (fix to confirm)
+### Death in the pod tunnel of feedingtowerc (to diagnose)
+
+- **Report (2026-10-01, build b069c22):** with Prey's own collision loaded
+  (the log matched the shipped `.cm`, bounds 7220 x 6956 x 8128), Tommy no
+  longer falls or walks through walls (next issue), but he still dies in the
+  tunnel under the pod hole, at (238, -1029, 80). The build before died at
+  (238, -1030, 74) too. The physics state is normal up to the death: on the
+  floor, no fall, no spirit walk.
+- **Checked in the map data and ruled out at that point:** `trigger_hurt`,
+  death volumes (`trigger_deathresurrection`, `hhSafeDeathVolume`), movers,
+  the slab paths, portals, possession, egg spawners and script kills (no
+  shipped script kills the player). The tunnel's materials are plain flesh
+  (`matter_flesh`), and the only volumes there are two `trigger_portal`
+  (visibility). The three fodders woken by `trigger_once_96` bite for 7 (14
+  at most with DDA), so they cannot kill in one hit.
+- **Change (diagnostics):** every death logs `player killed at (...): damage
+  N by <attacker>, inflictor <inflictor>; last hit: <damage def> from ... by
+  ...` and the entities within 256 units; a death volume logs `death volume
+  '<name>' kills the player`; `g_debugPlayerPhysics 1` also logs each hit
+  (`player damage: ...`, with the DDA scale) and the player's health once
+  per second.
+- **Missing enemies (2026-10-01):** a retail playthrough video shows two
+  enemies in the pod room before the tunnel; the tester never had them. The
+  room has exactly three creatures: `monster_mutilated_male_4` (patrols the
+  monitors), `ftdMutilatedWorker1` (the can worker) and `monster_crawler_21`.
+  The mutilated are enemies (team 7, 150 health, melee). With the rebuilt
+  collision they spawned on missing floor (the tester stood at z 254.6 at
+  (-357, -754), next to `monster_mutilated_male_4` at (-325, -711)) and fell.
+  The "Possession" autosave is written a moment after the level starts, so it
+  stored them already sinking: loading it with the shipped collision, all three
+  start inside the real floor and fall out of the world ("clip model outside
+  world bounds" at z -3200).
+- **Both tunnel deaths started from that autosave.** No run that entered
+  feedingtowerc fresh has reached the tunnel yet, so the death may come from
+  state that autosave stored with the rebuilt collision.
+- **Test:**
+  1. load a save from the end of lotaa, so feedingtowerc starts fresh with
+     the shipped collision (the two mutilated should be in the pod room);
+  2. type `g_debugPlayerPhysics 1` in the console;
+  3. go down the pod hole and walk the tunnel;
+  4. send the log. If Tommy dies, the `player killed` line names what killed
+     him.
+
+### Walking through walls and falling out of feedingtowerc (fixed, collision confirmed)
+
+- **Confirmed (2026-10-01):** the log showed `removing the rebuilt
+  maps/game/feedingtowerc.cm to load the shipped one`, then `collision
+  data:` equal to the shipped file (445 models, 55790 vertices, 47652
+  polygons, 3953 brushes, 17341 nodes), `map bounds are (7220.0, 6956.0,
+  8128.0)`, and `done.` for the two AAS files the map ships. Tommy walked the
+  room and the tunnel floor (z 80.3) without falling. No crash.
 
 - **Report (2026-10-01):** after the pod opens the flesh wall
   (`trigger_pod_gack_3`) at the start of game/feedingtowerc, Tommy walks
