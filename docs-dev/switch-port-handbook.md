@@ -38,6 +38,63 @@ section and the lesson goes to section 5.
 - the LTO build: above 30 fps in the bar with shadows off and the CPU at
   1224 MHz (Horizon-OC). LTO is the default (`b_lto` in the cross file).
 
+### Savegames rejected at random (fix to confirm)
+
+- **Report (2026-10-01, build 7ffb4ca):**
+  - loading a feedingtowerc save logged `savegame script checksum 0xa3cac5a1
+    does not match the compiled scripts (0x83e0e5a1 ...)`;
+  - the map restarted from its beginning instead of loading the save.
+  - The two checksums differ in a single bit, which a real hash of changed
+    data would not do.
+- **Cause:** `MD4_BlockChecksum` (and `MD5_BlockChecksum`) declared the digest
+  as `unsigned long[4]`. That is 8 bytes each on LP64 platforms, and MD4
+  itself used `unsigned long` words. The 16-byte digest filled half the array;
+  the other half was stack garbage mixed into the checksum, so it changed from
+  one run to the next. The Windows build has 4-byte longs and never saw it.
+- **Change:** 32-bit words and digests, so the checksums now match the Windows
+  builds. Savegames written by earlier Switch builds carry a garbage checksum:
+  they load when the script variable space matches (logged as "savegame from
+  a build with the old checksum"), and otherwise restart the map as before.
+- **Test:** load an old save (it should load, with that warning) and a new
+  one (no warning).
+
+### Walking through walls in the tunnel after the start of feedingtowerc (to diagnose)
+
+- **Report (2026-10-01):** after the level start of game/feedingtowerc, the
+  script (`FTC_SphereVoice_LevelStart`) spawns a pod (`podspawner_intro`).
+  Exploding it next to the flesh wall (`trigger_pod_gack_3`, only damaged by
+  `splash_podexplosion`) opens the small tunnel (`FTCSmallTunnelAfterStart`).
+  Going through the tunnel, Tommy passes through walls and dies. It happened
+  again after reloading the autosave; noclip, `com_fixedTic` and swap interval
+  changes did not help.
+- **Log:** before the first death the draw count climbed to ~4200 with 300
+  entities and 171 lights in view, which is what the camera sees from outside
+  the level, so the player really left the geometry.
+- **Context:** that session had restarted the map from a save rejected by the
+  checksum bug above.
+- **Checked and ruled out:**
+  - the map script (it never touches the player's collision);
+  - the `isSimpleBox 0` trigger fallback (lesson 15; no such trigger near the
+    tunnel);
+  - the collision sign-bit macros (already `unsigned int` here);
+  - the pod's splash damage (knockback 10);
+  - the feeding slabs (far from the tunnel).
+- **Change (diagnostics):** `g_debugPlayerPhysics 1` logs the player's origin,
+  velocity, gravity, orientation, collision box, contents, clip mask, whether
+  the clip model is linked, ground contact, noclip, spirit/deathwalk and
+  crouch once per second.
+- **Test:**
+  1. load a save from before the tunnel;
+  2. set `g_debugPlayerPhysics 1` from the console;
+  3. go through the tunnel;
+  4. send the log. Where the values jump (gravity, box, contents,
+     "UNLINKED", huge velocity) shows the cause.
+
+**Not a fix: `com_fixedTic 1`.** It runs exactly one 60 Hz game tick per
+rendered frame, so at 30 fps the game runs at half speed. The frame rate rises
+because each frame simulates less. `vid_restart` also leaves the screen black
+on the Switch; restart the game instead.
+
 ### Out of memory on the third map, graphics errors and crashes after loading saves (fixes to confirm)
 
 - **Reports (2026-10-01, build 7b7bc42):**
@@ -391,6 +448,10 @@ MSYSTEM=MSYS /c/Users/Usuario/Downloads/devkitPro/msys2/usr/bin/bash.exe -lc "cd
 21. **Do not destroy objects that were only constructed.** Prey destructors
     assume `Spawn` ran. A rejected savegame deleted the objects it had just
     created and crashed in `hhWeaponRifle::ZoomOut`.
+22. **`long` is 8 bytes on the Switch.** Code written for Windows (4-byte
+    `long`) breaks in quiet ways. Hash digests declared `unsigned long[4]`
+    were half garbage, so savegame checksums changed between runs. Grep for
+    `long` in anything that hashes, serializes or does bit tricks.
 
 ## 6. Performance: what is known
 

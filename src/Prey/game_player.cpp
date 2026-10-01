@@ -5006,8 +5006,34 @@ hhPlayer::Think
 	PDMMERGE PERSISTENTMERGE: Overridden, Done for 6-03-05 merge
 ==============
 */
+// OpenPrey: diagnostic for players losing collision (walking through walls, falling
+// out of the level). Logs the physics state once per second.
+static idCVar g_debugPlayerPhysics( "g_debugPlayerPhysics", "0", CVAR_GAME | CVAR_BOOL, "diagnostic: log the player's position, velocity, gravity, collision box, contents and clip mask once per second" );
+
 void hhPlayer::Think( void ) {
 	renderEntity_t *headRenderEnt;
+
+	if ( g_debugPlayerPhysics.GetBool() ) {
+		static int nextDebugTime = 0;
+		if ( gameLocal.time >= nextDebugTime || gameLocal.time < nextDebugTime - 1000 ) {
+			nextDebugTime = gameLocal.time + 1000;
+			const idPhysics *phys = GetPhysics();
+			const idClipModel *clip = phys->GetClipModel();
+			const idBounds box = clip ? clip->GetBounds() : bounds_zero;
+			// ToString rotates a few static buffers: copy each result
+			const idStr origin = phys->GetOrigin().ToString( 1 );
+			const idStr velocity = phys->GetLinearVelocity().ToString( 1 );
+			const idStr gravity = phys->GetGravity().ToString( 1 );
+			const idStr up = phys->GetAxis()[2].ToString( 2 );
+			const idStr boxMin = box[0].ToString( 1 );
+			const idStr boxMax = box[1].ToString( 1 );
+			gameLocal.Printf( "player physics %d: origin (%s) velocity (%s) gravity (%s) up (%s) box (%s)-(%s) contents 0x%x clipmask 0x%x clip %s ground %d noclip %d spirit %d deathwalk %d crouch %d\n",
+				gameLocal.time, origin.c_str(), velocity.c_str(), gravity.c_str(),
+				up.c_str(), boxMin.c_str(), boxMax.c_str(), phys->GetContents(), phys->GetClipMask(),
+				clip ? ( clip->IsLinked() ? "linked" : "UNLINKED" ) : "NONE", phys->HasGroundContacts() ? 1 : 0, noclip ? 1 : 0,
+				IsSpiritWalking() ? 1 : 0, IsDeathWalking() ? 1 : 0, physicsObj.IsCrouching() ? 1 : 0 );
+		}
+	}
 
 	UpdatePossession();
 

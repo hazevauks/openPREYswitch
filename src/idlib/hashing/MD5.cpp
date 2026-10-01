@@ -258,8 +258,10 @@ MD5_BlockChecksum
 ===============
 */
 unsigned long MD5_BlockChecksum( const void *data, int length ) {
-	unsigned long	digest[4];
-	unsigned long	val;
+	// OpenPrey: 32-bit words; see MD4_BlockChecksum (unsigned long left half the
+	// array as stack garbage on LP64 platforms)
+	unsigned int	digest[4];
+	unsigned int	val;
 	MD5_CTX			ctx;
 
 	MD5_Init( &ctx );

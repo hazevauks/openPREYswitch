@@ -2117,6 +2117,7 @@ bool idProgram::Restore( idRestoreGame *savefile ) {
 	}
 
 	savefile->ReadInt( num );
+	const int savedNumVariables = num;
 	for ( i = variableDefaults.Num(); i < num; i++ ) {
 		savefile->ReadByte( variables[i] );
 	}
@@ -2127,10 +2128,19 @@ bool idProgram::Restore( idRestoreGame *savefile ) {
 	checksum = CalculateChecksum();
 
 	if ( saved_checksum != checksum ) {
-		// OpenPrey: say why a savegame restarts its map instead of loading
-		gameLocal.Warning( "savegame script checksum 0x%08x does not match the compiled scripts (0x%08x, %d statements); restarting the map",
-			saved_checksum, checksum, statements.Num() );
-		result = false;
+		// OpenPrey: 64-bit builds before the MD4_BlockChecksum fix wrote checksums
+		// that included stack garbage, so their savegames never match. Scripts
+		// that really changed would also allocate a different amount of variable
+		// space, so a matching size is taken as the same scripts.
+		if ( savedNumVariables == numVariables ) {
+			gameLocal.Warning( "savegame script checksum 0x%08x differs from 0x%08x, but the script variables match (%d bytes): loading it (savegame from a build with the old checksum)",
+				saved_checksum, checksum, numVariables );
+		} else {
+			// say why a savegame restarts its map instead of loading
+			gameLocal.Warning( "savegame script checksum 0x%08x does not match the compiled scripts (0x%08x, %d statements, variables %d/%d); restarting the map",
+				saved_checksum, checksum, statements.Num(), savedNumVariables, numVariables );
+			result = false;
+		}
 	}
 
 	return result;

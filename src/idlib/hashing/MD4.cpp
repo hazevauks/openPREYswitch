@@ -38,7 +38,8 @@ typedef unsigned char *POINTER;
 typedef unsigned short int UINT2;
 
 /* UINT4 defines a four byte word */
-typedef unsigned long int UINT4;
+// OpenPrey: unsigned int, not unsigned long, which is 8 bytes on LP64 platforms (Switch, Linux)
+typedef unsigned int UINT4;
 
 /* MD4 context. */
 typedef struct {
@@ -245,8 +246,11 @@ MD4_BlockChecksum
 ===============
 */
 unsigned long MD4_BlockChecksum( const void *data, int length ) {
-	unsigned long	digest[4];
-	unsigned long	val;
+	// OpenPrey: 32-bit words. As unsigned long (8 bytes on LP64) the 16-byte digest
+	// filled half the array and the other half was stack garbage, so the checksum
+	// changed between runs: savegames failed their script checksum at random.
+	unsigned int	digest[4];
+	unsigned int	val;
 	MD4_CTX			ctx;
 
 	MD4_Init( &ctx );
