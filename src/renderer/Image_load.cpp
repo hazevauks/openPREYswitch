@@ -31,6 +31,22 @@ If you have questions concerning this license or the applicable additional terms
 #include "tr_local.h"
 
 /*
+Texture compression. DeriveOpts creates every material texture as uncompressed
+RGBA8 ("no need to compress" on desktop GPUs). On the Switch that costs 4-8x the
+memory bandwidth of DXT on a fill-rate-bound GPU with unified memory, and the
+generated/ .bimage cache grew to ~460 MB for one map, read from the SD card on
+every load. The cache is keyed on the format, so changing this regenerates it
+(once, with the fast DXT encoder).
+*/
+#ifdef __SWITCH__
+#define IMAGE_COMPRESS_DEFAULT	"1"
+#else
+#define IMAGE_COMPRESS_DEFAULT	"0"
+#endif
+idCVar image_compressTextures( "image_compressTextures", IMAGE_COMPRESS_DEFAULT, CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
+	"compress material textures: 0 = none (RGBA8), 1 = diffuse/default DXT5 and specular DXT1, 2 = also normal maps (DXT5)", 0, 2 );
+
+/*
 ================
 BitsForFormat
 ================
@@ -118,6 +134,17 @@ ID_INLINE void idImage::DeriveOpts() {
 				opts.gammaMips = false;
 				opts.format = FMT_RGBA8;
 				opts.colorFormat = CFM_DEFAULT;
+				{
+					// see image_compressTextures (formats as in the commented-out BFG mapping below)
+					const int compress = image_compressTextures.GetInteger();
+					if ( compress >= 1 && ( usage == TD_DIFFUSE || usage == TD_DEFAULT ) ) {
+						opts.format = FMT_DXT5;
+					} else if ( compress >= 1 && usage == TD_SPECULAR ) {
+						opts.format = FMT_DXT1;
+					} else if ( compress >= 2 && usage == TD_BUMP ) {
+						opts.format = FMT_DXT5;		// normal in RGB (the interaction programs read it unswizzled)
+					}
+				}
 				break;
 		}
 		

@@ -1308,8 +1308,13 @@ void idThread::Event_Trigger( idEntity *ent ) {
 	if ( ent ) {
 		ent->Signal( SIG_TRIGGER );
 		// Scripts use entity.activate() when they need a specific activator.
-		// sys.trigger() should behave like a generic fire-and-forget trigger.
-		ent->ProcessEvent( &EV_Activate, static_cast<idEntity *>( NULL ) );
+		// In multiplayer sys.trigger() is a generic fire-and-forget trigger. In
+		// single player it passes the local player, as Prey's SDK and Doom 3 do:
+		// the shipped scripts were written for that, and targets such as
+		// idPlayerStart, hhTarget_EndLevel and idFuncRadioChatter use their
+		// activator (with NULL they crashed on the Switch port).
+		idEntity *activator = gameLocal.isMultiplayer ? NULL : gameLocal.GetLocalPlayer();
+		ent->ProcessEvent( &EV_Activate, activator );
 		ent->TriggerGuis();
 	}
 }

@@ -6,6 +6,26 @@
 
 #define DAMAGE_INDICATOR_TIME		1100		// Update this in hud_damageindicator.guifragment too
 
+// OpenPrey: diagnostic for players losing collision (walking through walls, falling
+// out of the level). Logs the physics state once per second, and every hit.
+static idCVar g_debugPlayerPhysics( "g_debugPlayerPhysics", "0", CVAR_GAME | CVAR_BOOL, "diagnostic: log the player's position, velocity, gravity, collision box, contents and clip mask once per second, and every hit" );
+
+// OpenPrey: noclip as a cvar, for menus (the Switch settings menu). It follows the
+// player's noclip, which the noclip command still toggles, and setting it turns
+// noclip on or off.
+static idCVar g_noclip( "g_noclip", "0", CVAR_GAME | CVAR_BOOL | CVAR_NOCHEAT, "single player: noclip (fly through walls); follows the noclip command" );
+
+// OpenPrey: what hurt the player last, for the death report in hhPlayer::Killed
+static idStr s_lastPlayerDamage;
+
+static idStr PlayerReportLabel( const idEntity *ent ) {
+	if ( ent == NULL ) {
+		return "nothing";
+	}
+	const idStr origin = ent->GetPhysics()->GetOrigin().ToString( 0 );
+	return idStr( ent->GetClassname() ) + " '" + ent->GetName() + "' at (" + origin + ")";
+}
+
 const idEventDef EV_PlayWeaponAnim( "playWeaponAnim", "sd" );
 const idEventDef EV_RechargeHealth( "<rechargehealth>", NULL );
 const idEventDef EV_RechargeRifleAmmo( "<rechargeRifleAmmo>", NULL );
@@ -3328,6 +3348,11 @@ hhPlayer::Damage
 void hhPlayer::Damage( idEntity *inflictor, idEntity *attacker, const idVec3 &dir,
 					   const char *damageDefName, const float damageScale, const int location ) {
 
+	s_lastPlayerDamage = idStr( damageDefName ? damageDefName : "?" ) + " from " + PlayerReportLabel( inflictor ) + " by " + PlayerReportLabel( attacker );
+	if ( g_debugPlayerPhysics.GetBool() || g_debugDamage.GetBool() ) {
+		gameLocal.Printf( "player damage: %s, scale %.2f, dda %.2f, health %d\n", s_lastPlayerDamage.c_str(), damageScale, gameLocal.GetDDAValue(), health );
+	}
+
 	if(	IsSpiritOrDeathwalking() ) { //Player is spirit-walking, so check for special immunities
 		const idKeyValue *kv = spawnArgs.MatchPrefix("immunityspirit");
 		while( kv && kv->GetValue().Length() ) {
@@ -3648,6 +3673,20 @@ void hhPlayer::Killed( idEntity *inflictor, idEntity *attacker, int damage, cons
 	//you only die once
 	if( AI_DEAD ) {
 		return;
+	}
+
+	// OpenPrey: say what killed the player, and what was around
+	{
+		const idStr where = GetOrigin().ToString( 1 );
+		gameLocal.Printf( "player killed at (%s): damage %d by %s, inflictor %s; last hit: %s\n", where.c_str(), damage,
+			PlayerReportLabel( attacker ).c_str(), PlayerReportLabel( inflictor ).c_str(), s_lastPlayerDamage.c_str() );
+		idEntity *nearby[ 64 ];
+		const int numNearby = gameLocal.clip.EntitiesTouchingBounds( GetPhysics()->GetAbsBounds().Expand( 256.0f ), -1, nearby, 64 );
+		for ( int i = 0; i < numNearby; i++ ) {
+			if ( nearby[i] != this && nearby[i] != gameLocal.world ) {
+				gameLocal.Printf( "  near the player: %s\n", PlayerReportLabel( nearby[i] ).c_str() );
+			}
+		}
 	}
 
 	CancelEvents(&EV_DamagePlayer); //rww - don't do any more posted damage events once dead
@@ -5008,6 +5047,38 @@ hhPlayer::Think
 */
 void hhPlayer::Think( void ) {
 	renderEntity_t *headRenderEnt;
+
+	if ( g_debugPlayerPhysics.GetBool() ) {
+		static int nextDebugTime = 0;
+		if ( gameLocal.time >= nextDebugTime || gameLocal.time < nextDebugTime - 1000 ) {
+			nextDebugTime = gameLocal.time + 1000;
+			const idPhysics *phys = GetPhysics();
+			const idClipModel *clip = phys->GetClipModel();
+			const idBounds box = clip ? clip->GetBounds() : bounds_zero;
+			// ToString rotates a few static buffers: copy each result
+			const idStr origin = phys->GetOrigin().ToString( 1 );
+			const idStr velocity = phys->GetLinearVelocity().ToString( 1 );
+			const idStr gravity = phys->GetGravity().ToString( 1 );
+			const idStr up = phys->GetAxis()[2].ToString( 2 );
+			const idStr boxMin = box[0].ToString( 1 );
+			const idStr boxMax = box[1].ToString( 1 );
+			gameLocal.Printf( "player physics %d: origin (%s) velocity (%s) gravity (%s) up (%s) box (%s)-(%s) contents 0x%x clipmask 0x%x clip %s ground %d noclip %d spirit %d deathwalk %d crouch %d health %d\n",
+				gameLocal.time, origin.c_str(), velocity.c_str(), gravity.c_str(),
+				up.c_str(), boxMin.c_str(), boxMax.c_str(), phys->GetContents(), phys->GetClipMask(),
+				clip ? ( clip->IsLinked() ? "linked" : "UNLINKED" ) : "NONE", phys->HasGroundContacts() ? 1 : 0, noclip ? 1 : 0,
+				IsSpiritWalking() ? 1 : 0, IsDeathWalking() ? 1 : 0, physicsObj.IsCrouching() ? 1 : 0, health );
+		}
+	}
+
+	if ( !gameLocal.isMultiplayer && gameLocal.GetLocalPlayer() == this ) {
+		if ( g_noclip.IsModified() ) {
+			g_noclip.ClearModified();
+			noclip = g_noclip.GetBool();
+		} else if ( g_noclip.GetBool() != noclip ) {
+			g_noclip.SetBool( noclip );		// changed by the noclip command, a new map or a savegame
+			g_noclip.ClearModified();
+		}
+	}
 
 	UpdatePossession();
 

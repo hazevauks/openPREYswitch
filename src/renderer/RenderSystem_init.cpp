@@ -57,12 +57,19 @@ idCVar r_glDriver( "r_glDriver", "", CVAR_RENDERER, "\"opengl32\", etc." );
 idCVar r_useLightPortalFlow( "r_useLightPortalFlow", "1", CVAR_RENDERER | CVAR_BOOL, "use a more precise area reference determination" );
 idCVar r_multiSamples( "r_multiSamples", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "number of antialiasing samples" );
 idCVar r_postAA( "r_postAA", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "post AA mode: 0 = off, 1 = SMAA 1x", 0, 1, idCmdSystem::ArgCompletion_Integer<0,1> );
-idCVar r_bloom( "r_bloom", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "enable bloom post-process" );
+// Post-processing defaults: SSAO (20 samples per pixel) and bloom are full-screen passes the
+// Switch GPU (Tegra X1) cannot afford at stock clocks; they stay available as options.
+#ifdef __SWITCH__
+#define OPENPREY_POSTFX_DEFAULT	"0"
+#else
+#define OPENPREY_POSTFX_DEFAULT	"1"
+#endif
+idCVar r_bloom( "r_bloom", OPENPREY_POSTFX_DEFAULT, CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "enable bloom post-process" );
 idCVar r_bloomThreshold( "r_bloomThreshold", "0.72", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "bloom bright-pass threshold", 0.0f, 2.0f );
 idCVar r_bloomSoftKnee( "r_bloomSoftKnee", "0.15", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "bloom soft threshold knee", 0.0f, 1.0f );
 idCVar r_bloomIntensity( "r_bloomIntensity", "0.45", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "bloom contribution scale", 0.0f, 4.0f );
 idCVar r_bloomRadius( "r_bloomRadius", "1.35", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "bloom sample radius scale", 0.1f, 8.0f );
-idCVar r_ssao( "r_ssao", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "enable screen-space ambient occlusion" );
+idCVar r_ssao( "r_ssao", OPENPREY_POSTFX_DEFAULT, CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "enable screen-space ambient occlusion" );
 idCVar r_ssaoRadius( "r_ssaoRadius", "36.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "SSAO sampling radius in view-space units", 4.0f, 256.0f );
 idCVar r_ssaoBias( "r_ssaoBias", "2.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "SSAO horizon bias in view-space units", 0.0f, 32.0f );
 idCVar r_ssaoIntensity( "r_ssaoIntensity", "1.35", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "SSAO darkening strength", 0.0f, 4.0f );
@@ -193,7 +200,14 @@ idCVar r_skipSubviews( "r_skipSubviews", "0", CVAR_RENDERER | CVAR_INTEGER, "1 =
 idCVar r_skipGuiShaders( "r_skipGuiShaders", "0", CVAR_RENDERER | CVAR_INTEGER, "1 = skip all gui elements on surfaces, 2 = skip drawing but still handle events, 3 = draw but skip events", 0, 3, idCmdSystem::ArgCompletion_Integer<0,3> );
 idCVar r_skipParticles( "r_skipParticles", "0", CVAR_RENDERER | CVAR_INTEGER, "1 = skip all particle systems", 0, 1, idCmdSystem::ArgCompletion_Integer<0,1> );
 idCVar r_subviewOnly( "r_subviewOnly", "0", CVAR_RENDERER | CVAR_BOOL, "1 = don't render main view, allowing subviews to be debugged" );
-idCVar r_shadows( "r_shadows", "1", CVAR_RENDERER | CVAR_BOOL  | CVAR_ARCHIVE, "enable shadows" );
+// OpenPrey: off by default on the Switch, where stencil shadows cost ~40% of the
+// frame in busy maps (docs-dev/switch-port.md, "Vertex buffer churn, vertex pages and shadows")
+#ifdef __SWITCH__
+#define SHADOWS_DEFAULT		"0"
+#else
+#define SHADOWS_DEFAULT		"1"
+#endif
+idCVar r_shadows( "r_shadows", SHADOWS_DEFAULT, CVAR_RENDERER | CVAR_BOOL  | CVAR_ARCHIVE, "enable shadows" );
 idCVar r_testARBProgram( "r_testARBProgram", "0", CVAR_RENDERER | CVAR_BOOL, "experiment with vertex/fragment programs" );
 idCVar r_testGamma( "r_testGamma", "0", CVAR_RENDERER | CVAR_FLOAT, "if > 0 draw a grid pattern to test gamma levels", 0, 195 );
 idCVar r_testGammaBias( "r_testGammaBias", "0", CVAR_RENDERER | CVAR_FLOAT, "if > 0 draw a grid pattern to test gamma levels" );
@@ -317,6 +331,9 @@ static void R_CheckPortableExtensions( void ) {
 		//	glConfig.maxTextureUnits = MAX_MULTITEXTURE_UNITS;
 		//}
 		glConfig.maxTextureUnits = 16; // jmarshall: OpenGL LIES
+		if ( glConfig.maxTextureUnits > MAX_MULTITEXTURE_UNITS ) {
+			glConfig.maxTextureUnits = MAX_MULTITEXTURE_UNITS;	// backEnd.glState.tmu[] size
+		}
 		if ( glConfig.maxTextureUnits < 2 ) {
 			glConfig.multitextureAvailable = false;	// shouldn't ever happen
 		}
@@ -756,7 +773,8 @@ void R_InitOpenGL( void ) {
 		parms.stereo = false;
 
 		if ( GLimp_Init( parms ) ) {
-			// it worked
+			// it worked; a new context starts with default program env parameters
+			RB_InvalidateProgramEnvCache();
 			break;
 		}
 

@@ -194,6 +194,36 @@ typedef enum
 
 class idRenderWorld;
 
+// renderer counters for platform performance logs (Switch com_logPerf / com_logHitches),
+// accumulated until R_TakePerfCounters
+typedef struct rendererPerf_s {
+	double	frontEndSec;		// RenderScene CPU time
+	double	backEndSec;			// RB_ExecuteBackEndCommands CPU time (includes the swap)
+	double	gpuTailSec;			// r_perfGpuSync: time glFinish waited for the GPU before the swap
+	int		draws;				// draw calls
+	int		parmsSkipped;		// env parameter updates filtered by r_cacheProgramParms
+	int		bufferAllocs;		// vertex cache buffers (re)created with glBufferData
+	int		bufferPaged;		// of those, carved out of vertex pages (no driver allocation)
+	int		bufferAllocBytes;
+	int		tempBytes;			// frame temp vertex data
+	int		tempOverflows;		// frames whose temp data spilled into new buffers
+	int		frames;				// renderer frames (vertex cache EndFrame calls)
+
+	// front end breakdown (R_RenderView phases, summed over every view and subview)
+	double	findSec;			// FindViewLightsAndEntities: portal flow and culling
+	double	lightSurfSec;		// R_AddLightSurfaces: light shaders, prelight shadows
+	double	modelSurfSec;		// R_AddModelSurfaces: dynamic models, interactions
+	double	sortSec;			// R_SortDrawSurfs
+	int		views;				// views rendered, subviews (mirrors, portals, cameras) included
+	int		viewEntities;		// visible entities, summed over views
+	int		viewLights;
+	int		md5Generated;		// animated models re-instantiated
+	int		entityCallbacks;	// game callbacks that update entities while rendering
+	int		interactionsCreated;
+} rendererPerf_t;
+
+void	R_TakePerfCounters( rendererPerf_t &perf );
+
 
 class idRenderSystem {
 public:

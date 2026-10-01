@@ -14,6 +14,38 @@ if build_games
       install: true,
       install_dir: install_gamedir_dir,
     )
+  elif is_switch
+    # Switch homebrew cannot dlopen a game module: build it as a static library
+    # that the engine executable links directly.
+    game_static_library = static_library(
+      game_binary_name,
+      game_sources,
+      include_directories: game_include_dirs,
+      link_with: game_idlib_library,
+      cpp_args: game_common_cpp_args,
+      c_args: game_common_c_args,
+      cpp_pch: game_module_pch_headers,
+      install: false,
+    )
+
+    # One relocatable object exporting only GetGameAPI, so the game keeps the
+    # private globals and idlib copy it has as a DLL on desktop platforms.
+    switch_game_object = custom_target(
+      'switch_game_object',
+      input: [game_static_library, game_idlib_library],
+      output: game_binary_name + '.o',
+      command: [
+        py,
+        meson.project_source_root() / 'tools' / 'switch' / 'make_game_object.py',
+        get_option('b_lto') ? ['--lto'] : [],
+        '@OUTPUT@',
+        find_program('objcopy', required: true),
+        # the LTO prelink generates the game's code, with the same profile flags
+        meson.get_compiler('cpp').cmd_array() + switch_pgo_args,
+        '--',
+        '@INPUT@',
+      ],
+    )
   else
     shared_module(
       game_binary_name,

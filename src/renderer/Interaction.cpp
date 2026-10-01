@@ -157,10 +157,14 @@ void R_FreeInteractionCullInfo( srfCullInfo_t &cullInfo ) {
 }
 
 #define	MAX_CLIPPED_POINTS	20
+// OpenPrey: file-local, tr_stencilshadow.cpp has a different clipTri_t (an ODR
+// violation that link-time optimization reports)
+namespace {
 typedef struct {
 	int		numVerts;
 	idVec3	verts[MAX_CLIPPED_POINTS];
 } clipTri_t;
+}
 
 /*
 =============

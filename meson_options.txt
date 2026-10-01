@@ -47,3 +47,32 @@ option(
   value: false,
   description: 'Fail configure when MSVC is older than the VS 2026 baseline (19.46+).',
 )
+
+option(
+  'switch_mesa_sdk',
+  type: 'string',
+  value: '',
+  description: 'Nintendo Switch only: prefix of an alternative Mesa SDK (e.g. danfromtico/mesa-switch staged by build-opengl.sh, or tools/switch/mesa20/build.sh; .../opt/devkitpro/portlibs/switch). Empty uses the devkitPro switch-mesa package.',
+)
+
+option(
+  'switch_pgo',
+  type: 'combo',
+  choices: ['off', 'generate', 'use'],
+  value: 'off',
+  description: 'Nintendo Switch only: profile-guided optimization. generate = instrumented build that writes profiles to sdmc:/switch/openprey/pgo on exit; use = build with the profiles in switch_pgo_data. See docs-dev/switch-port.md, "LTO and PGO".',
+)
+
+option(
+  'switch_pgo_data',
+  type: 'string',
+  value: '',
+  description: 'Nintendo Switch only: folder with the .gcda profiles copied from the SD card, for switch_pgo=use. Empty = <source>/.tmp/pgo-data.',
+)
+
+option(
+  'switch_variant',
+  type: 'string',
+  value: '',
+  description: 'Nintendo Switch only: names the build OpenPrey-<variant>.nro, titled "openPREY (<variant>)", so several builds fit on one SD card. Defaults to mesa-sdk when switch_mesa_sdk is set.',
+)

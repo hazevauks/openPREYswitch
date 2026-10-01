@@ -634,7 +634,10 @@ typedef struct {
 	textureType_t	textureType;
 } tmu_t;
 
-const int MAX_MULTITEXTURE_UNITS =	8;
+// Must cover every unit GL_SelectTexture accepts (maxTextureImageUnits, 32 on
+// current drivers) and the hardcoded glConfig.maxTextureUnits of 16. With 8,
+// RB_SetDefaultGLState wrote GL_MODULATE past tmu[] into neighboring globals.
+const int MAX_MULTITEXTURE_UNITS =	32;
 typedef struct {
 	tmu_t		tmu[MAX_MULTITEXTURE_UNITS];
 	int			currenttmu;
@@ -1110,6 +1113,20 @@ GL wrapper/helper functions
 
 void	GL_SelectTexture( int unit );
 void	GL_CheckErrors( void );
+
+// fine-grained front end (RenderScene) and back end (RB_ExecuteBackEndCommands) CPU
+// time, accumulated until R_TakePerfTimes; used by platform performance logs
+double	R_PerfTime( void );
+void	R_AddPerfTime( bool backEnd, double seconds );
+void	R_TakePerfTimes( double &frontEndSec, double &backEndSec );
+void	RB_CountPerfDraw( void );
+void	R_AddVertexCachePerf( int bufferAllocs, int bufferPaged, int bufferAllocBytes, int tempBytes, bool tempOverflow );
+void	R_AddFrontEndPhaseTimes( double findSec, double lightSurfSec, double modelSurfSec, double sortSec );
+void	R_AddFrontEndCounts( const performanceCounters_t &pc );
+
+// cached glProgramEnvParameter4fvARB (tr_backend.cpp, r_cacheProgramParms)
+void	RB_ProgramEnvParameter4fv( GLenum target, GLuint index, const GLfloat *params );
+void	RB_InvalidateProgramEnvCache( void );
 void	GL_ClearStateDelta( void );
 void	GL_State( int stateVector );
 void	GL_TexEnv( int env );
@@ -1205,6 +1222,9 @@ void		GLimp_Shutdown( void );
 // and resets the gamma ramps.
 
 void		GLimp_SwapBuffers( void );
+#ifdef __SWITCH__
+float		GLimp_LastFrameWaitMsec( void );	// time the last frame waited in the swap and for r_fpsLock
+#endif
 // Calls the system specific swapbuffers routine, and may also perform
 // other system specific cvar checks that happen every frame.
 // This will not be called if 'r_drawBuffer GL_FRONT'

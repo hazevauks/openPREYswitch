@@ -1,0 +1,14 @@
+// Render scale / dynamic resolution (src/renderer/RenderSystem.cpp).
+// The 3D view rendered at a reduced size is copied into _renderScale and drawn
+// over the full screen with this material before the 2D UI.
+postprocess/openprey_renderscale
+{
+	sort gui
+	noShadows
+	{
+		blend gl_one, gl_zero
+		map _renderScale
+		clamp
+		linear
+	}
+}

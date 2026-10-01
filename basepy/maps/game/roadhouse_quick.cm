@@ -1,6 +1,6 @@
 CM "1.00"
 
-2335191334
+2335191370
 
 collisionModel "worldMap" {
 	vertices { /* numVertices = */ 6231

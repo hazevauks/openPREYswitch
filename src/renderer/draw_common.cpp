@@ -1769,7 +1769,7 @@ void RB_SetProgramEnvironment( void ) {
 
 	parm[2] = 0;
 	parm[3] = 1;
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, 0, parm );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, 0, parm );
 #else
 	// screen power of two correction factor, assuming the copy to _currentRender
 	// also copied an extra row and column for the bilerp
@@ -1783,18 +1783,18 @@ void RB_SetProgramEnvironment( void ) {
 
 	parm[2] = 0.0f;
 	parm[3] = 1.0f;
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, 0, parm );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, 0, parm );
 #endif
 
 	if ( glConfig.ARBFragmentProgramAvailable ) {
-		glProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 0, parm );
+		RB_ProgramEnvParameter4fv( GL_FRAGMENT_PROGRAM_ARB, 0, parm );
 
 		// window coord to 0.0 to 1.0 conversion
 		parm[0] = 1.0f / w;
 		parm[1] = 1.0f / h;
 		parm[2] = 0.0f;
 		parm[3] = 1.0f;
-		glProgramEnvParameter4fvARB( GL_FRAGMENT_PROGRAM_ARB, 1, parm );
+		RB_ProgramEnvParameter4fv( GL_FRAGMENT_PROGRAM_ARB, 1, parm );
 	}
 
 	//
@@ -1804,7 +1804,7 @@ void RB_SetProgramEnvironment( void ) {
 	parm[1] = backEnd.viewDef->renderView.vieworg[1];
 	parm[2] = backEnd.viewDef->renderView.vieworg[2];
 	parm[3] = 1.0;
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, 1, parm );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, 1, parm );
 
 
 }
@@ -1827,7 +1827,7 @@ void RB_SetProgramEnvironmentSpace( void ) {
 	// set eye position in local space
 	R_GlobalPointToLocal( space->modelMatrix, backEnd.viewDef->renderView.vieworg, *(idVec3 *)parm );
 	parm[3] = 1.0;
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, 5, parm );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, 5, parm );
 
 	// we need the model matrix without it being combined with the view matrix
 	// so we can transform local vectors to global coordinates
@@ -1835,17 +1835,17 @@ void RB_SetProgramEnvironmentSpace( void ) {
 	parm[1] = space->modelMatrix[4];
 	parm[2] = space->modelMatrix[8];
 	parm[3] = space->modelMatrix[12];
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, 6, parm );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, 6, parm );
 	parm[0] = space->modelMatrix[1];
 	parm[1] = space->modelMatrix[5];
 	parm[2] = space->modelMatrix[9];
 	parm[3] = space->modelMatrix[13];
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, 7, parm );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, 7, parm );
 	parm[0] = space->modelMatrix[2];
 	parm[1] = space->modelMatrix[6];
 	parm[2] = space->modelMatrix[10];
 	parm[3] = space->modelMatrix[14];
-	glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, 8, parm );
+	RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, 8, parm );
 }
 
 /*
@@ -2343,7 +2343,7 @@ static void RB_T_Shadow( const drawSurf_t *surf ) {
 
 		R_GlobalPointToLocal( surf->space->modelMatrix, backEnd.vLight->globalLightOrigin, localLight.ToVec3() );
 		localLight.w = 0.0f;
-		glProgramEnvParameter4fvARB( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_ORIGIN, localLight.ToFloatPtr() );
+		RB_ProgramEnvParameter4fv( GL_VERTEX_PROGRAM_ARB, PP_LIGHT_ORIGIN, localLight.ToFloatPtr() );
 	}
 
 	tri = surf->geo;

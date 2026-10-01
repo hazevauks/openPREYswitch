@@ -559,6 +559,12 @@ public:
 	// restarted after the sound is reloaded.
 	void					StopVoicesWithSample( const idSoundSample* const sample );
 
+	// OpenPrey: samples are released at level changes (BeginLevelLoad) and come
+	// back when referenced again: by LoadSample, by a sound shader the loading
+	// level looks up (idSoundShader::ReloadPurgedSamples) or when played.
+	void					ReloadPurgedSample( idSoundSample* sample );
+	bool					SampleIsPlaying( const idSoundSample* sample ) const;
+
 	void					Restart();
 	void					SetNeedsRestart()
 	{
@@ -625,6 +631,7 @@ public:
 	bool						needsRestart;
 
 	bool						insideLevelLoad;
+	bool						levelLoadsBegun;	// OpenPrey: a map has started loading (samples after that are purgeable)
 
 private:
 	struct queuedSubtitle_t
@@ -659,6 +666,8 @@ public:
 		focusMuted( false ),
 		musicMuted( false ),
 		needsRestart( false ),
+		insideLevelLoad( false ),
+		levelLoadsBegun( false ),
 		subtitleQueueChanged( false )
 	{}
 };

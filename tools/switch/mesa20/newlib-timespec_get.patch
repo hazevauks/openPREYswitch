@@ -1,0 +1,14 @@
+Current newlib declares timespec_get() in <time.h> without implementing it,
+which clashes with Mesa's static fallback. Keep the fallback under its own name.
+--- a/include/c11/threads.h
++++ b/include/c11/threads.h
+@@ -46,8 +46,9 @@
+ #ifndef HAVE_TIMESPEC_GET
+ #include <sys/time.h>
+ 
++#define timespec_get mesa_timespec_get
+ static inline int
+ timespec_get(struct timespec *ts, int base)
+ {
+     if (!ts) return 0;
+     if (base == TIME_UTC) {

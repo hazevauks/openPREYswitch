@@ -1,15 +1,69 @@
 project(
   'OpenPrey',
   ['c', 'cpp'],
-  version: '0.0.1',
+  version: '0.1.0',
   meson_version: '>=1.2.0',
   default_options: ['c_std=c11', 'cpp_std=c++20', 'warning_level=0', 'b_vscrt=static_from_buildtype'],
 )
 
 host_system = host_machine.system()
 host_cpu_family = host_machine.cpu_family()
-if not ['windows', 'linux', 'darwin'].contains(host_system)
+if not ['windows', 'linux', 'darwin', 'horizon'].contains(host_system)
   error('Unsupported host system for OpenPrey Meson build: ' + host_system)
+endif
+
+# Nintendo Switch (devkitPro libnx). Cross-compile only; see tools/switch/meson/switch-cross.ini.
+# The platform bring-up is in progress: the game code is linked statically into the
+# engine because Switch homebrew cannot load a separate game module at runtime.
+is_switch = host_system == 'horizon'
+
+# Nintendo Switch profile-guided optimization (switch_pgo; docs-dev/switch-port.md,
+# "LTO and PGO"). Profile files are named after the object path relative to the
+# build dir (-fprofile-prefix-path), spelled as the compiler's working directory:
+# the Windows form under MSYS2, hence cygpath.
+switch_pgo = get_option('switch_pgo')
+switch_pgo_args = []
+switch_pgo_link_args = []
+if is_switch and switch_pgo != 'off'
+  cygpath = find_program('cygpath', required: false)
+  switch_pgo_prefix = meson.global_build_root()
+  if cygpath.found()
+    switch_pgo_prefix = run_command(cygpath, '-w', meson.global_build_root(), check: true).stdout().strip()
+  endif
+  # Arc counts only: value profiling (indirect calls, top-N values) keeps its
+  # state in thread-local variables and crashed in static constructors on the
+  # Switch. Both stages must agree on it, or the counters would not match.
+  if switch_pgo == 'generate'
+    # instrumented build: each .gcda is written to the SD card at exit
+    switch_pgo_args = [
+      '-fprofile-generate=sdmc:/switch/openprey/pgo',
+      '-fprofile-prefix-path=' + switch_pgo_prefix,
+      '-fprofile-update=prefer-atomic',
+      '-fno-profile-values',
+      '-DOPENPREY_PGO_GENERATE',
+    ]
+    # --wrap=fopen: see OPENPREY_PGO_GENERATE in src/sys/switch/switch_main.cpp
+    switch_pgo_link_args = switch_pgo_args + ['-Wl,--wrap=fopen']
+  else
+    switch_pgo_data = get_option('switch_pgo_data')
+    if switch_pgo_data == ''
+      switch_pgo_data = meson.project_source_root() / '.tmp' / 'pgo-data'
+    endif
+    if cygpath.found()
+      switch_pgo_data = run_command(cygpath, '-m', switch_pgo_data, check: true).stdout().strip()
+    endif
+    switch_pgo_args = [
+      '-fprofile-use=' + switch_pgo_data,
+      '-fprofile-prefix-path=' + switch_pgo_prefix,
+      '-fprofile-partial-training',
+      '-fprofile-correction',
+      '-fno-profile-values',
+      '-Wno-missing-profile',
+    ]
+    switch_pgo_link_args = switch_pgo_args
+  endif
+  add_project_arguments(switch_pgo_args, language: ['c', 'cpp'])
+  add_project_link_arguments(switch_pgo_link_args, language: ['c', 'cpp'])
 endif
 
 binary_arch = host_cpu_family
@@ -197,6 +251,9 @@ if build_engine
       fallback: ['glew', 'glew_dep'],
       default_options: fallback_opt,
     )
+  elif is_switch
+    # No GLEW on Switch: GL entry points are resolved through eglGetProcAddress.
+    glew_dep = dependency('', required: false)
   else
     glew_dep = dependency('glew', required: true)
   endif
@@ -210,6 +267,9 @@ if build_engine
 
   if host_system == 'darwin'
     openal_dep = dependency('appleframeworks', modules: ['OpenAL'], required: true)
+  elif is_switch
+    # devkitPro switch-openal-soft package (static libopenal.a).
+    openal_dep = cc.find_library('openal', required: true)
   else
     openal_dep = dependency(
       'openal',
@@ -266,6 +326,39 @@ if build_engine
         required: true,
       ),
     ]
+  elif is_switch
+    # devkitPro portlibs: SDL2 for window/input, Mesa (EGL + glapi + nouveau) for OpenGL.
+    # Mesa is C++ and needs libstdc++/libm even when linked from C.
+    switch_mesa_sdk = get_option('switch_mesa_sdk')
+    if switch_mesa_sdk == ''
+      switch_gl_deps = [
+        cc.find_library('EGL', required: true),
+        cc.find_library('glapi', required: true),
+        cc.find_library('drm_nouveau', required: true),
+      ]
+    else
+      # Alternative Mesa build: its headers and archives take precedence over portlibs.
+      # - danfromtico/mesa-switch (Mesa 26): own Horizon GPU backend, needs expat, no libdrm_nouveau;
+      # - devkitPro switch-mesa 20.1 rebuilt from source (tools/switch/mesa20): needs libdrm_nouveau.
+      # Both are optional here; an archive nothing references adds nothing to the link.
+      switch_mesa_lib_dir = switch_mesa_sdk / 'lib'
+      switch_gl_deps = [
+        declare_dependency(compile_args: ['-I' + (switch_mesa_sdk / 'include')]),
+        cc.find_library('EGL', dirs: [switch_mesa_lib_dir], required: true),
+        cc.find_library('glapi', dirs: [switch_mesa_lib_dir], required: true),
+        cc.find_library('expat', dirs: [switch_mesa_lib_dir], required: false),
+        cc.find_library('drm_nouveau', required: false),
+        cc.find_library('z', required: true),
+      ]
+      message('Switch: using the Mesa SDK at ' + switch_mesa_sdk)
+    endif
+    deps += [dependency('threads', required: true), cc.find_library('SDL2', required: true)]
+    deps += switch_gl_deps
+    deps += [
+      cc.find_library('stdc++', required: true),
+      cc.find_library('m', required: true),
+      cc.find_library('nx', required: true),
+    ]
   endif
 endif
 
@@ -277,6 +370,10 @@ if host_system == 'windows'
   shared_cpp_args += ['-D_WINDOWS', '-DWIN32']
   shared_c_args += ['-D_WINDOWS', '-DWIN32']
   engine_link_args += ['/STACK:16777216,16777216']
+elif is_switch
+  # No libGL to hard-link against: qgl* pointers are loaded at runtime through EGL.
+  shared_cpp_args += ['-DOPENPREY_SWITCH=1']
+  shared_c_args += ['-DOPENPREY_SWITCH=1']
 else
   shared_cpp_args += ['-DID_GL_HARDLINK']
   shared_c_args += ['-DID_GL_HARDLINK']
@@ -343,6 +440,8 @@ if build_engine
       install: true,
       install_dir: install_root_dir,
     )
+  elif is_switch
+    # Built after subdir('basepy'), which produces the game object it links.
   else
     executable(
       engine_client_binary_name,
@@ -390,6 +489,8 @@ if build_engine
       install: true,
       install_dir: install_root_dir,
     )
+  elif is_switch
+    # No dedicated server on Switch.
   else
     executable(
       engine_ded_binary_name,
@@ -463,6 +564,75 @@ endif
 
 if build_engine or build_games
   subdir('basepy')
+endif
+
+if is_switch and build_engine
+  if not build_games
+    error('The Switch engine links the game statically: configure with -Dbuild_games=true.')
+  endif
+
+  # devkitPro Mesa has no libGL: generate the GL 1.1 entry points, resolved
+  # through eglGetProcAddress at GLimp_Init.
+  switch_gl11_loader = custom_target(
+    'switch_gl11_loader',
+    input: ['tools/switch/gen_gl11_loader.py', 'src/external/glew/glew.h'],
+    output: 'switch_gl11_loader.cpp',
+    command: [py, '@INPUT0@', '@INPUT1@', '@OUTPUT@'],
+  )
+
+  switch_engine_elf = executable(
+    engine_client_binary_name,
+    engine_sources + [switch_gl11_loader, switch_game_object],
+    include_directories: engine_include_dirs + [include_directories('src/sys/switch')],
+    dependencies: deps,
+    cpp_args: engine_cpp_args,
+    c_args: engine_c_args,
+    cpp_pch: pch_headers,
+    # --wrap=pthread_create: every thread, library ones included, starts through
+    # src/sys/switch/switch_threads.cpp, which places it on a CPU core.
+    link_args: engine_link_args + ['-Wl,-Map,' + engine_client_binary_name + '.map', '-Wl,--wrap=pthread_create'],
+    name_suffix: 'elf',
+    install: false,
+  )
+
+  # Homebrew package: metadata (.nacp) + executable -> .nro
+  dkp_tools_dir = '/opt/devkitpro/tools/bin'
+  nacptool = find_program('nacptool', dirs: [dkp_tools_dir], required: true)
+  elf2nro = find_program('elf2nro', dirs: [dkp_tools_dir], required: true)
+
+  # Builds against an alternative Mesa SDK get their own name and title, so they
+  # can sit on the SD card side by side (switch_variant names them; default mesa-sdk).
+  switch_variant = get_option('switch_variant')
+  if switch_variant == '' and get_option('switch_mesa_sdk') != ''
+    switch_variant = 'mesa-sdk'
+  endif
+  # The homebrew menu lists the port as "openPREY" by hazevauks, with the icon in
+  # assets/switch (256x256 JPEG). The file keeps the OpenPrey name that the SD
+  # card layout and the docs use.
+  switch_nro_name = switch_variant == '' ? 'OpenPrey' : 'OpenPrey-' + switch_variant
+  switch_app_title = switch_variant == '' ? 'openPREY' : 'openPREY (' + switch_variant + ')'
+  switch_app_author = 'hazevauks'
+  switch_app_icon = meson.project_source_root() / 'assets' / 'switch' / 'icon.jpg'
+
+  switch_nacp = custom_target(
+    'switch_nacp',
+    output: switch_nro_name + '.nacp',
+    command: [nacptool, '--create', switch_app_title, switch_app_author, meson.project_version(), '@OUTPUT@'],
+  )
+
+  custom_target(
+    'switch_nro',
+    input: switch_engine_elf,
+    output: switch_nro_name + '.nro',
+    command: [
+      elf2nro, '@INPUT@', '@OUTPUT@',
+      '--nacp=' + switch_nacp.full_path(),
+      '--icon=' + switch_app_icon,
+    ],
+    depends: switch_nacp,
+    depend_files: switch_app_icon,
+    build_by_default: true,
+  )
 endif
 
 install_data(

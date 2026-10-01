@@ -1287,6 +1287,9 @@ extern unzFile unzReOpen (const char* path, unzFile file)
     fin=fopen(path,"rb");
 	if (fin==NULL)
 		return NULL;
+#ifdef __SWITCH__
+	setvbuf(fin, NULL, _IOFBF, SWITCH_STDIO_BUFFER_BYTES);
+#endif
 
 	s=(unz_s*)ALLOC(sizeof(unz_s));
 	memcpy(s, (unz_s*)file, sizeof(unz_s));
@@ -1326,6 +1329,9 @@ extern unzFile unzOpen (const char* path)
     fin=fopen(path,"rb");
 	if (fin==NULL)
 		return NULL;
+#ifdef __SWITCH__
+	setvbuf(fin, NULL, _IOFBF, SWITCH_STDIO_BUFFER_BYTES);
+#endif
 
 	central_pos = unzlocal_SearchCentralDir(fin);
 	if (central_pos==0)

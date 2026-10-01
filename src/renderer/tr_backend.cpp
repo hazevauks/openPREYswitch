@@ -131,7 +131,105 @@ void RB_LogComment( const char *comment, ... ) {
 
 //=============================================================================
 
+/*
+====================
+RB_ProgramEnvParameter4fv
 
+Every glProgramEnvParameter4fvARB marks the program constants dirty, so the
+driver re-uploads the constant buffer on the next draw even when the value did
+not change. Interactions set ~19 env parameters per draw, and consecutive
+interactions of the same light on world surfaces repeat most of them. On
+Mesa/nouveau (Switch) the render back end was 75-85% of the frame. This
+filters calls that would not change the value.
+
+Env parameters are per GL context and survive program binds and reloads; the
+cache is invalidated when the context is (re)created (R_InitOpenGL).
+====================
+*/
+idCVar r_cacheProgramParms( "r_cacheProgramParms", "1", CVAR_RENDERER | CVAR_BOOL, "skip ARB program env parameter updates that do not change the value" );
+
+static const int	ENV_PARM_CACHE_SIZE = 128;
+static float		envParmCache[2][ENV_PARM_CACHE_SIZE][4];
+static bool			envParmValid[2][ENV_PARM_CACHE_SIZE];
+static rendererPerf_t	perfCounters;
+
+void RB_InvalidateProgramEnvCache( void ) {
+	memset( envParmValid, 0, sizeof( envParmValid ) );
+}
+
+void RB_ProgramEnvParameter4fv( GLenum target, GLuint index, const GLfloat *params ) {
+	const int t = ( target == GL_FRAGMENT_PROGRAM_ARB ) ? 1 : 0;
+	if ( index < (GLuint)ENV_PARM_CACHE_SIZE ) {
+		if ( r_cacheProgramParms.GetBool() ) {
+			float *cached = envParmCache[t][index];
+			if ( envParmValid[t][index] && cached[0] == params[0] && cached[1] == params[1] && cached[2] == params[2] && cached[3] == params[3] ) {
+				perfCounters.parmsSkipped++;
+				return;
+			}
+			cached[0] = params[0];
+			cached[1] = params[1];
+			cached[2] = params[2];
+			cached[3] = params[3];
+			envParmValid[t][index] = true;
+		} else {
+			envParmValid[t][index] = false;
+		}
+	}
+	glProgramEnvParameter4fvARB( target, index, params );
+}
+
+/*
+====================
+R_TakePerfCounters
+
+Renderer counters since the last call, for the Switch performance logs.
+
+r_perfGpuSync makes the back end wait for the GPU (glFinish) before each swap and
+reports that wait. The GPU then starts every frame idle, so the rest of the back
+end time is CPU work (GL calls and driver validation) and the wait is GPU work
+the CPU did not cover: a long wait means the frame is GPU bound (fill rate,
+bandwidth), a short one means the driver CPU cost is the limit.
+====================
+*/
+idCVar r_perfGpuSync( "r_perfGpuSync", "0", CVAR_RENDERER | CVAR_BOOL, "diagnostic: glFinish before each swap and report the GPU wait in com_logPerf (serializes CPU and GPU, lowers the frame rate)" );
+
+void R_TakePerfCounters( rendererPerf_t &perf ) {
+	perf = perfCounters;
+	R_TakePerfTimes( perf.frontEndSec, perf.backEndSec );
+	memset( &perfCounters, 0, sizeof( perfCounters ) );
+}
+
+void RB_CountPerfDraw( void ) {
+	perfCounters.draws++;
+}
+
+// idVertexCache::EndFrame
+void R_AddVertexCachePerf( int bufferAllocs, int bufferPaged, int bufferAllocBytes, int tempBytes, bool tempOverflow ) {
+	perfCounters.bufferAllocs += bufferAllocs;
+	perfCounters.bufferPaged += bufferPaged;
+	perfCounters.bufferAllocBytes += bufferAllocBytes;
+	perfCounters.tempBytes += tempBytes;
+	perfCounters.tempOverflows += tempOverflow ? 1 : 0;
+	perfCounters.frames++;
+}
+
+// R_RenderView
+void R_AddFrontEndPhaseTimes( double findSec, double lightSurfSec, double modelSurfSec, double sortSec ) {
+	perfCounters.findSec += findSec;
+	perfCounters.lightSurfSec += lightSurfSec;
+	perfCounters.modelSurfSec += modelSurfSec;
+	perfCounters.sortSec += sortSec;
+	perfCounters.views++;
+}
+
+// R_PerformanceCounters, before tr.pc is cleared
+void R_AddFrontEndCounts( const performanceCounters_t &pc ) {
+	perfCounters.viewEntities += pc.c_visibleViewEntities;
+	perfCounters.viewLights += pc.c_viewLights;
+	perfCounters.md5Generated += pc.c_generateMd5;
+	perfCounters.entityCallbacks += pc.c_entityDefCallbacks;
+	perfCounters.interactionsCreated += pc.c_createInteractions;
+}
 
 /*
 ====================
@@ -143,7 +241,7 @@ void GL_SelectTexture( int unit ) {
 		return;
 	}
 
-	if ( unit < 0 || unit >= glConfig.maxTextureUnits && unit >= glConfig.maxTextureImageUnits ) {
+	if ( unit < 0 || unit >= MAX_MULTITEXTURE_UNITS || ( unit >= glConfig.maxTextureUnits && unit >= glConfig.maxTextureImageUnits ) ) {
 		common->Warning( "GL_SelectTexture: unit = %i", unit );
 		return;
 	}
@@ -527,6 +625,12 @@ const void	RB_SwapBuffers( const void *data ) {
 		RB_ApplyCRTToBackBuffer();
 	}
 
+	if ( r_perfGpuSync.GetBool() ) {
+		const double syncStart = R_PerfTime();
+		glFinish();
+		perfCounters.gpuTailSec += R_PerfTime() - syncStart;
+	}
+
 	// don't flip if drawing to front buffer
 	if ( !r_frontBuffer.GetBool() ) {
 	    GLimp_SwapBuffers();
@@ -666,6 +770,7 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 	}
 
 	backEndStartTime = Sys_Milliseconds();
+	const double perfStart = R_PerfTime();
 
 	// needed for editor rendering
 	RB_SetDefaultGLState();
@@ -724,6 +829,7 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 	// stop rendering on this thread
 	backEndFinishTime = Sys_Milliseconds();
 	backEnd.pc.msec = backEndFinishTime - backEndStartTime;
+	R_AddPerfTime( true, R_PerfTime() - perfStart );
 
 	if ( r_debugRenderToTexture.GetInteger() == 1 ) {
 		common->Printf( "3d: %i, 2d: %i, SetBuf: %i, SwpBuf: %i, CpyRenders: %i, CpyFrameBuf: %i\n", c_draw3d, c_draw2d, c_setBuffers, c_swapBuffers, c_copyRenders, backEnd.c_copyFrameBuffer );

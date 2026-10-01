@@ -1360,6 +1360,10 @@ idVarDef *idProgram::AllocDef( idTypeDef *type, const char *name, idVarDef *scop
 			def_z = AllocDef( type, element, scope, constant );
 			def_z->value.ptrOffset = def_x->value.ptrOffset + ( 2 * sizeof( float ) );
 		} else {
+			// stack vectors take exactly type->Size() bytes (E_EVENT_SIZEOF_VEC), as the
+			// caller pushes them (idInterpreter::PushVector) and as parmSize counts them
+			const int vectorStackOffset = ( scope->Type() == ev_function ) ? scope->value.functionPtr->locals : 0;
+
 			// make automatic defs for the vectors elements
 			// origin can be accessed as origin_x, origin_y, and origin_z
 			sprintf( element, "%s_x", def->Name() );
@@ -1375,6 +1379,14 @@ idVarDef *idProgram::AllocDef( idTypeDef *type, const char *name, idVarDef *scop
 			if ( scope->Type() == ev_function ) {
 				def_y->value.stackOffset = def_x->value.stackOffset + sizeof( float );
 				def_z->value.stackOffset = def_x->value.stackOffset + ( 2 * sizeof( float ) );
+				if ( type->Type() == ev_vector ) {
+					// OpenPrey 64-bit: each float element above reserved sizeof( intptr_t ) = 8
+					// bytes, 24 in all, while a pushed vector parameter takes 16. Every parameter
+					// after a vector was then read 8 bytes off (roadhouse: DistanceToXY( vector,
+					// vector ) returned garbage and the grandfather conversation never went on).
+					assert( def_x->value.stackOffset == vectorStackOffset );
+					scope->value.functionPtr->locals = vectorStackOffset + type->Size();
+				}
 			} else {
 				def_y->value.bytePtr = def_x->value.bytePtr + sizeof( float );
 				def_z->value.bytePtr = def_x->value.bytePtr + ( 2 * sizeof( float ) );
@@ -2105,6 +2117,7 @@ bool idProgram::Restore( idRestoreGame *savefile ) {
 	}
 
 	savefile->ReadInt( num );
+	const int savedNumVariables = num;
 	for ( i = variableDefaults.Num(); i < num; i++ ) {
 		savefile->ReadByte( variables[i] );
 	}
@@ -2115,7 +2128,19 @@ bool idProgram::Restore( idRestoreGame *savefile ) {
 	checksum = CalculateChecksum();
 
 	if ( saved_checksum != checksum ) {
-		result = false;
+		// OpenPrey: 64-bit builds before the MD4_BlockChecksum fix wrote checksums
+		// that included stack garbage, so their savegames never match. Scripts
+		// that really changed would also allocate a different amount of variable
+		// space, so a matching size is taken as the same scripts.
+		if ( savedNumVariables == numVariables ) {
+			gameLocal.Warning( "savegame script checksum 0x%08x differs from 0x%08x, but the script variables match (%d bytes): loading it (savegame from a build with the old checksum)",
+				saved_checksum, checksum, numVariables );
+		} else {
+			// say why a savegame restarts its map instead of loading
+			gameLocal.Warning( "savegame script checksum 0x%08x does not match the compiled scripts (0x%08x, %d statements, variables %d/%d); restarting the map",
+				saved_checksum, checksum, statements.Num(), savedNumVariables, numVariables );
+			result = false;
+		}
 	}
 
 	return result;

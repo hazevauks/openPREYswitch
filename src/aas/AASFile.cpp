@@ -1004,11 +1004,18 @@ bool idAASFileLocal::ParseAreas( idLexer &src ) {
 		area.numFaces = src.ParseInt();
 		area.cluster = src.ParseInt();
 		area.clusterAreaNum = src.ParseInt();
-// jmarshall - AAS 1.08 
-		area.numFeatures = src.ParseInt();
-		area.firstFeature = src.ParseInt();
+// jmarshall - AAS 1.08
+		// OpenPrey: Prey's AAS 1.07 files end the area here, without the two
+		// feature fields; reading them anyway would derail the rest of the file
+		if ( src.CheckTokenString( ")" ) ) {
+			area.numFeatures = 0;
+			area.firstFeature = 0;
+		} else {
+			area.numFeatures = src.ParseInt();
+			area.firstFeature = src.ParseInt();
+			src.ExpectTokenString( ")" );
+		}
 // jmarshall end
-		src.ExpectTokenString( ")" );
 		areas.Append( area );
 		ParseReachabilities( src, i );
 	}

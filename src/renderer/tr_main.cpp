@@ -1123,9 +1123,13 @@ void R_RenderView( viewDef_t *parms ) {
 	// portal-to-screen scissor box calculations
 	R_SetupProjection();
 
+	// OpenPrey: phase times for the Switch performance logs (R_AddFrontEndPhaseTimes)
+	const double findStart = R_PerfTime();
+
 	// identify all the visible portalAreas, and the entityDefs and
 	// lightDefs that are in them and pass culling.
 	static_cast<idRenderWorldLocal *>(parms->renderWorld)->FindViewLightsAndEntities();
+	const double findEnd = R_PerfTime();
 
 	// constrain the view frustum to the view lights and entities
 	R_ConstrainViewFrustum();
@@ -1134,6 +1138,7 @@ void R_RenderView( viewDef_t *parms ) {
 	// that are visible
 	// add any pre-generated light shadows, and calculate the light shader values
 	R_AddLightSurfaces();
+	const double lightSurfEnd = R_PerfTime();
 
 	// adds ambient surfaces and create any necessary interaction surfaces to add to the light
 	// lists
@@ -1145,8 +1150,11 @@ void R_RenderView( viewDef_t *parms ) {
 	// any viewLight that didn't have visible surfaces can have it's shadows removed
 	R_RemoveUnecessaryViewLights();
 
+	const double modelSurfEnd = R_PerfTime();
+
 	// sort all the ambient surfaces for translucency ordering
 	R_SortDrawSurfs();
+	R_AddFrontEndPhaseTimes( findEnd - findStart, lightSurfEnd - findEnd, modelSurfEnd - lightSurfEnd, R_PerfTime() - modelSurfEnd );
 
 	// generate any subviews (mirrors, cameras, etc) before adding this view
 	if ( R_GenerateSubViews() ) {

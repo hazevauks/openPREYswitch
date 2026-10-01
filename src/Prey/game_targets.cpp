@@ -345,7 +345,13 @@ void hhTarget_ControlVehicle::Spawn() {
 void hhTarget_ControlVehicle::Event_Activate( idEntity *activator ) {
 	hhVehicle *vehicle = NULL;
 
-	if (activator->IsType(hhPlayer::Type)) {
+	// OpenPrey: sys.trigger() activates with a NULL activator (idThread::Event_Trigger);
+	// this target is about the player, as the retail sys.trigger() activator was
+	if ( !activator ) {
+		activator = gameLocal.GetLocalPlayer();
+	}
+
+	if (activator && activator->IsType(hhPlayer::Type)) {
 		hhPlayer *player = static_cast<hhPlayer*>(activator);
 
 		// Search target list to find vehicle
@@ -617,8 +623,15 @@ void hhTarget_EndLevel::Event_Activate(idEntity *activator) {
 
 		guiLoading->StateChanged(gameLocal.time);
 
+		// OpenPrey: sys.trigger() activates with a NULL activator (idThread::Event_Trigger).
+		// The level end is always the local player's: crashed at the end of game/roadhouse,
+		// where the script triggers this when the ship takes Tommy.
+		if ( !activator ) {
+			activator = gameLocal.GetLocalPlayer();
+		}
+
 		// HUMANHEAD CJR:  If the player hits this and they are spiritwalking, stop the spiritwalk before loading the next level
-		if ( activator->IsType( hhPlayer::Type ) ) {
+		if ( activator && activator->IsType( hhPlayer::Type ) ) {
 			hhPlayer *player = static_cast<hhPlayer *>( activator );
 			if ( player ) {
 

@@ -719,6 +719,23 @@ int idSoundShader::GetNumSounds() const
 
 /*
 ===============
+idSoundShader::ReloadPurgedSamples
+===============
+*/
+void idSoundShader::ReloadPurgedSamples() const
+{
+	for( int i = 0; i < leadins.Num(); i++ )
+	{
+		soundSystemLocal.ReloadPurgedSample( leadins[i] );
+	}
+	for( int i = 0; i < entries.Num(); i++ )
+	{
+		soundSystemLocal.ReloadPurgedSample( entries[i] );
+	}
+}
+
+/*
+===============
 idSoundShader::GetSound
 ===============
 */
@@ -744,6 +761,9 @@ idSoundShader::GetTimeLength
 */
 float idSoundShader::GetTimeLength() const
 {
+	// OpenPrey: a released sample would measure zero
+	ReloadPurgedSamples();
+
 	int maxLengthMs = 0;
 	for( int i = 0; i < leadins.Num(); ++i )
 	{

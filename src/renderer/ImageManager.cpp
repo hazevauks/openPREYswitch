@@ -780,6 +780,10 @@ Frees all images used by the previous level
 void idImageManager::BeginLevelLoad() {
 	insideLevelLoad = true;
 
+	// OpenPrey: what stays resident across level loads (memory reports)
+	int purgedCount = 0, keptCount = 0;
+	int64_t purgedBytes = 0, keptBytes = 0;
+
 	for ( int i = 0 ; i < images.Num() ; i++ ) {
 		idImage	*image = images[ i ];
 
@@ -789,14 +793,23 @@ void idImageManager::BeginLevelLoad() {
 		}
 
 		if ( !image->referencedOutsideLevelLoad && image->IsLoaded() ) {
+			purgedCount++;
+			purgedBytes += image->StorageSize();
 			image->PurgeImage();
 			//idLib::Printf( "purging %s\n", image->GetName() );
 		} else {
+			if ( image->IsLoaded() ) {
+				keptCount++;
+				keptBytes += image->StorageSize();
+			}
 			//idLib::Printf( "not purging %s\n", image->GetName() );
 		}
 
 		image->levelLoadReferenced = false;
 	}
+
+	common->Printf( "images: purged %d (%d MB), kept %d loaded outside level loads (%d MB)\n",
+		purgedCount, (int)( purgedBytes >> 20 ), keptCount, (int)( keptBytes >> 20 ) );
 }
 
 
@@ -881,6 +894,17 @@ void idImageManager::EndLevelLoad() {
 
 	int	end = Sys_Milliseconds();
 	common->Printf( "%5i images loaded in %5.1f seconds\n", loadCount, (end-start) * 0.001 );
+
+	// OpenPrey: resident texture memory after the load (memory reports)
+	int residentCount = 0;
+	int64_t residentBytes = 0;
+	for ( int i = 0; i < images.Num(); i++ ) {
+		if ( images[i]->IsLoaded() ) {
+			residentCount++;
+			residentBytes += images[i]->StorageSize();
+		}
+	}
+	common->Printf( "%5i images resident, %d MB\n", residentCount, (int)( residentBytes >> 20 ) );
 	common->Printf( "----------------------------------------\n" );
 	//R_ListImages_f( idCmdArgs( "sorted sorted", false ) );
 }

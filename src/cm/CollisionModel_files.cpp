@@ -660,6 +660,19 @@ bool idCollisionModelManagerLocal::LoadCollisionModelFile( const char *name, uns
 	if ( mapFileCRC && crc != mapFileCRC ) {
 		common->Printf( "%s is out of date\n", fileName.c_str() );
 		delete src;
+		// OpenPrey: builds with the Quake 4 map CRC rejected every shipped .cm and wrote
+		// a rebuilt one into the writable game directory, where it hides the pk4 copy.
+		// Remove such a stale rebuild (RemoveFile only touches that directory) and load
+		// the shipped file instead.
+		static bool removingStale = false;
+		if ( !removingStale && fileSystem->FileIsInPAK( fileName ) ) {
+			common->Printf( "removing the rebuilt %s to load the shipped one\n", fileName.c_str() );
+			fileSystem->RemoveFile( fileName );
+			removingStale = true;
+			const bool loaded = LoadCollisionModelFile( name, mapFileCRC );
+			removingStale = false;
+			return loaded;
+		}
 		return false;
 	}
 

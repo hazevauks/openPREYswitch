@@ -29,7 +29,7 @@
 #endif
 
 // jscott: uncomment this to use id's sqrt and trig approximations
-#if defined( __linux__ ) || defined( MACOS_X )
+#if defined( __linux__ ) || defined( MACOS_X ) || defined( __SWITCH__ )
 	// TTimo - enabling for OSes I'm covering
 	// (14:34:20) mrelusive: in the general case we don't use those functions
 	// (14:34:28) mrelusive: they are only for specific cases where they are faster
@@ -49,18 +49,18 @@
 #define	ANGLE2BYTE(x)			( idMath::FtoiFast( (x) * 256.0f / 360.0f ) & 255 )
 #define	BYTE2ANGLE(x)			( (x) * ( 360.0f / 256.0f ) )
 
-#define FLOATSIGNBITSET(f)		((*(const unsigned long *)&(f)) >> 31)
-#define FLOATSIGNBITNOTSET(f)	((~(*(const unsigned long *)&(f))) >> 31)
-#define FLOATNOTZERO(f)			((*(const unsigned long *)&(f)) & ~(1<<31) )
-#define INTSIGNBITSET(i)		(((const unsigned long)(i)) >> 31)
-#define INTSIGNBITNOTSET(i)		((~((const unsigned long)(i))) >> 31)
+#define FLOATSIGNBITSET(f)		((*(const unsigned int *)&(f)) >> 31)
+#define FLOATSIGNBITNOTSET(f)	((~(*(const unsigned int *)&(f))) >> 31)
+#define FLOATNOTZERO(f)			((*(const unsigned int *)&(f)) & ~(1<<31) )
+#define INTSIGNBITSET(i)		(((const unsigned int)(i)) >> 31)
+#define INTSIGNBITNOTSET(i)		((~((const unsigned int)(i))) >> 31)
 
-#define	FLOAT_IS_NAN(x)			(((*(const unsigned long *)&x) & 0x7f800000) == 0x7f800000)
-#define FLOAT_IS_INF(x)			(((*(const unsigned long *)&x) & 0x7fffffff) == 0x7f800000)
+#define	FLOAT_IS_NAN(x)			(((*(const unsigned int *)&x) & 0x7f800000) == 0x7f800000)
+#define FLOAT_IS_INF(x)			(((*(const unsigned int *)&x) & 0x7fffffff) == 0x7f800000)
 #define FLOAT_IS_INVALID(x)		( FLOAT_IS_NAN( x ) || FLOAT_IS_INF( x ) )
-#define FLOAT_IS_IND(x)			((*(const unsigned long *)&x) == 0xffc00000)
-#define	FLOAT_IS_DENORMAL(x)	(((*(const unsigned long *)&x) & 0x7f800000) == 0x00000000 && \
-								 ((*(const unsigned long *)&x) & 0x007fffff) != 0x00000000 )
+#define FLOAT_IS_IND(x)			((*(const unsigned int *)&x) == 0xffc00000)
+#define	FLOAT_IS_DENORMAL(x)	(((*(const unsigned int *)&x) & 0x7f800000) == 0x00000000 && \
+								 ((*(const unsigned int *)&x) & 0x007fffff) != 0x00000000 )
 
 #define IEEE_FLT_MANTISSA_BITS	23
 #define IEEE_FLT_EXPONENT_BITS	8
@@ -328,11 +328,11 @@ private:
 };
 
 ID_INLINE float idMath::RSqrt( float x ) {
-	long i;
+	int i;	// must be 32 bits: long is 64 bits on LP64 targets (Linux/macOS/Switch arm64)
 	float y, r;
 
 	y = x * 0.5f;
-	i = *reinterpret_cast<long *>( &x );
+	i = *reinterpret_cast<int *>( &x );
 	i = 0x5f3759df - ( i >> 1 );
 	r = *reinterpret_cast<float *>( &i );
 	r = r * ( 1.5f - r * r * y );
@@ -928,7 +928,7 @@ ID_INLINE int idMath::FtoiFast( float f ) {
 		// although that should be more portable
 		return lrintf( f );
 	#endif
-#elif defined( MACOS_X )
+#elif defined( MACOS_X ) || defined( __SWITCH__ )
 	return lrintf( f );
 #else
 	return (int) f;
@@ -1071,7 +1071,9 @@ ID_INLINE float idMath::AngleMod(float a)
 
 class rvRandom {
 private:
-	static	unsigned long	mSeed;
+	// 32 bits on every target, as with MSVC's unsigned long: flrand/irand rely on
+	// the seed wrapping at 2^32 to keep ( mSeed >> 17 ) in 0..32767.
+	static	unsigned int	mSeed;
 public:
 							rvRandom( void ) { mSeed = 0x89abcdef; }
 
@@ -1079,7 +1081,7 @@ public:
 	static	int				Init( void );
 
 	// Init the seed to a unique number
-	static	void			Init( unsigned long seed ) { mSeed = seed; }
+	static	void			Init( unsigned long seed ) { mSeed = (unsigned int)seed; }
 
 	// Returns a float min <= x < max (exclusive; will get max - 0.00001; but never max)
 	static	float			flrand( float min, float max );

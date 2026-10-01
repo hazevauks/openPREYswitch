@@ -676,6 +676,8 @@ void idImageManager::CreateIntrinsicImages() {
 	ImageFromFunction("_postProcessAlbedo1", R_RGBA8Image);
 	ImageFromFunction("_threshold", R_ThresholdImage);
 	ImageFromFunction("_replay", R_RGBA8Image);
+	// render scale / dynamic resolution: the scaled 3D view is copied here and upscaled (RenderSystem.cpp)
+	ImageFromFunction("_renderScale", R_RGBA8Image);
 
 
 	// save a copy of this for material comparison, because currentRenderImage may get

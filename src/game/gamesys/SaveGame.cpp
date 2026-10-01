@@ -874,7 +874,13 @@ void idRestoreGame::DeleteObjects( void ) {
 	// Remove the NULL object before deleting
 	objects.RemoveIndex( 0 );
 
-	objects.DeleteContents( true );
+	// OpenPrey: these objects were only constructed (CreateObjects), never spawned
+	// or restored, and Prey destructors assume a spawned object:
+	// hhWeaponRifle::~hhWeaponRifle crashed in ZoomOut on members that Spawn sets.
+	// Leak them instead. This only runs when a savegame is rejected, and the
+	// session then restarts the map (InitFromNewMap also clears the unique objects
+	// that hhFireController constructors register).
+	objects.Clear();
 }
 
 /*
@@ -890,7 +896,9 @@ void idRestoreGame::Error( const char *fmt, ... ) {
 	vsprintf( text, fmt, argptr );
 	va_end( argptr );
 
-	objects.DeleteContents( true );
+	// OpenPrey: not deleted, for the reason given in DeleteObjects (part of them
+	// may not be restored yet)
+	objects.Clear();
 
 	gameLocal.Error( "%s", text );
 }
@@ -1363,6 +1371,18 @@ void idRestoreGame::ReadRenderEntity( renderEntity_t &renderEntity ) {
 	renderEntity.timeGroup = 0;
 //	renderEntity.xrayIndex = 0;
 	// HUMANHEAD END
+
+	// OpenPrey: renderEntity_t fields from the Raven lineage that Prey savegames do
+	// not carry. Some callers restore into memory that was never cleared
+	// (hhGameLocal::Restore allocates its static render entities with new), and
+	// the garbage there made the renderer draw overlays with random materials, or
+	// crash on them, after loading a savegame.
+	renderEntity.suppressSurfaceMask = 0;
+	renderEntity.overlayShader = NULL;
+	renderEntity.referenceSoundHandle = 0;
+	renderEntity.weaponDepthHackInViewID = 0;
+	renderEntity.shadowLODDistance = 0.0f;
+	renderEntity.suppressLOD = 0;
 }
 
 /*
@@ -1408,6 +1428,14 @@ void idRestoreGame::ReadRenderLight( renderLight_t &renderLight ) {
 
 	ReadInt( index );
 	renderLight.referenceSound = gameSoundWorld->EmitterForIndex( index );
+
+	// OpenPrey: renderLight_t fields from the Raven lineage that Prey savegames do
+	// not carry, as spawning leaves them (ParseSpawnArgsToRenderLight clears the
+	// struct). globalLight in particular skips portal culling for the light.
+	renderLight.detailLevel = 0.0f;
+	renderLight.noDynamicShadows = false;
+	renderLight.globalLight = false;
+	renderLight.referenceSoundHandle = 0;
 }
 
 /*

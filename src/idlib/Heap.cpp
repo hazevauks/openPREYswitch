@@ -65,7 +65,7 @@ void *local_malloc(size_t size)
 	#else
 		void *addr = malloc(size);
 		if( !addr && size ) {
-			common->FatalError( "Out of memory" );
+			common->FatalError( "Out of memory (%u bytes requested)", (unsigned int)size );
 		}
 		return( addr );
 	#endif  // RV_UNIFIED_ALLOCATOR

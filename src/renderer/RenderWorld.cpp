@@ -807,6 +807,7 @@ void idRenderWorldLocal::RenderScene( const renderView_t *renderView ) {
 	tr.guiModel->Clear();
 
 	int startTime = Sys_Milliseconds();
+	const double perfStart = R_PerfTime();
 
 	// setup view parms for the initial view
 	//
@@ -887,6 +888,7 @@ void idRenderWorldLocal::RenderScene( const renderView_t *renderView ) {
 	int endTime = Sys_Milliseconds();
 
 	tr.pc.frontEndMsec += endTime - startTime;
+	R_AddPerfTime( false, R_PerfTime() - perfStart );
 
 	// prepare for any 2D drawing after this
 	tr.guiModel->Clear();
@@ -2269,6 +2271,12 @@ R_GlobalShaderOverride
 ===============
 */
 bool R_GlobalShaderOverride( const idMaterial **shader ) {
+
+	// R_RemapShaderBySkin returns NULL for surfaces a skin removes; callers skip
+	// those right after this call (crashed here when loading a savegame)
+	if ( *shader == NULL ) {
+		return false;
+	}
 
 	if ( !(*shader)->IsDrawn() ) {
 		return false;

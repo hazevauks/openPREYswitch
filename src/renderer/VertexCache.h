@@ -49,6 +49,11 @@ typedef struct vertCache_s {
 	struct vertCache_s	**	user;				// will be set to zero when purged
 	struct vertCache_s *next, *prev;	// may be on the static list or one of the frame lists
 	int				frameUsed;			// it can't be purged if near the current frame
+
+	// OpenPrey: static blocks are carved out of shared vertex pages (see VertexCache.cpp)
+	GLuint			ownVbo;				// buffer of this header, used when the block is not paged
+	int				page;				// vertex page holding the block, -1 = not paged
+	int				pageClass;			// size class of that page range
 } vertCache_t;
 
 
@@ -115,6 +120,7 @@ private:
 
 	int				staticAllocThisFrame;	// debug counter
 	int				staticCountThisFrame;
+	int				staticPagedThisFrame;	// of those, carved out of vertex pages
 	int				dynamicAllocThisFrame;
 	int				dynamicCountThisFrame;
 
@@ -127,6 +133,14 @@ private:
 
 	vertCache_t		*tempBuffers[NUM_VERTEX_FRAMES];		// allocated at startup
 	bool			tempOverflow;			// had to alloc a temp in static memory
+
+	// OpenPrey: vertex pages (r_vertexPages, see VertexCache.cpp)
+	bool			usePages;				// r_vertexPages when the cache was initialized
+	GLsync			tempFences[NUM_VERTEX_FRAMES];	// signaled when the GPU is done with tempBuffers[i]
+	void			AllocPageRange( vertCache_t *block, bool indexBuffer );
+	void			RetirePageRange( vertCache_t *block );
+	void			ReclaimPageRanges( void );
+	void			ListPages( void );
 
 	idBlockAlloc<vertCache_t,1024, 0>	headerAllocator;
 

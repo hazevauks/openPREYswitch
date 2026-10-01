@@ -1,0 +1,7 @@
+build/
+romfs/
+*.elf
+*.nro
+*.nacp
+*.map
+build_mesa_sdk/

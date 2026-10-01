@@ -36,6 +36,10 @@ If you have questions concerning this license or the applicable additional terms
 
 extern glconfig_t	glConfig;
 
+#ifdef __SWITCH__
+void Switch_DrawSettingsMenu( void );	// src/sys/switch/switch_settings.cpp
+#endif
+
 idCVar	idSessionLocal::com_showAngles( "com_showAngles", "0", CVAR_SYSTEM | CVAR_BOOL, "" );
 idCVar	idSessionLocal::com_minTics( "com_minTics", "1", CVAR_SYSTEM, "" );
 idCVar	idSessionLocal::com_showTics( "com_showTics", "0", CVAR_SYSTEM | CVAR_BOOL, "" );
@@ -2096,6 +2100,16 @@ void idSessionLocal::SetBytesNeededForMapLoad( const char *mapName, int bytesNee
 	}
 }
 
+#ifdef __SWITCH__
+// src/sys/switch: CPU boost (system FastLoad mode) while a map loads. The guard
+// also ends the boost when an error unwinds out of ExecuteMapChange.
+void Sys_SetLoadingBoost( bool enable );
+struct idSwitchLoadingBoostGuard {
+	idSwitchLoadingBoostGuard() { Sys_SetLoadingBoost( true ); }
+	~idSwitchLoadingBoostGuard() { Sys_SetLoadingBoost( false ); }
+};
+#endif
+
 /*
 ===============
 idSessionLocal::ExecuteMapChange
@@ -2107,6 +2121,13 @@ Exits with mapSpawned = true
 ===============
 */
 void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
+#ifdef __SWITCH__
+	idSwitchLoadingBoostGuard loadingBoost;
+#endif
+	const bool profileLoad = cvarSystem->GetCVarBool( "fs_profileLoads" );
+	if ( profileLoad ) {
+		cmdSystem->BufferCommandText( CMD_EXEC_NOW, "fsLoadStats reset\n" );
+	}
 	int		i;
 	bool	reloadingSameMap;
 	const bool playLevelLoadMusic =
@@ -2297,6 +2318,9 @@ void idSessionLocal::ExecuteMapChange( bool noFadeWipe ) {
 
 	int	msec = Sys_Milliseconds() - start;
 	common->Printf( "%6d msec to load %s\n", msec, mapString.c_str() );
+	if ( profileLoad ) {
+		cmdSystem->BufferCommandText( CMD_EXEC_NOW, "fsLoadStats\n" );
+	}
 
 	// let the game trigger interaction generation after the first game frame
 	// so lights and entities have presented to the render world.
@@ -3306,6 +3330,11 @@ void idSessionLocal::Draw() {
 	if ( !fullConsole ) {
 		console->Draw( false );
 	}
+
+#ifdef __SWITCH__
+	// OpenPrey: the Switch settings menu goes over everything (src/sys/switch/switch_settings.cpp)
+	Switch_DrawSettingsMenu();
+#endif
 }
 
 /*

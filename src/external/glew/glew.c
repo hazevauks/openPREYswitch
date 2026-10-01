@@ -49,6 +49,8 @@
 #  endif
 #elif defined(GLEW_EGL)
 #  include <GL/eglew.h>
+#elif defined(__SWITCH__) /* OpenPrey Switch: Mesa EGL, no GLX */
+#  include <EGL/egl.h>
 #elif defined(_WIN32)
 /*
  * If NOGDI is defined, wingdi.h won't be included by windows.h, and thus
@@ -171,6 +173,8 @@ void* NSGLGetProcAddress (const GLubyte *name)
 #elif defined(GLEW_OSMESA)
 #  define glewGetProcAddress(name) OSMesaGetProcAddress((const char *)name)
 #elif defined(GLEW_EGL)
+#  define glewGetProcAddress(name) eglGetProcAddress((const char *)name)
+#elif defined(__SWITCH__) /* OpenPrey Switch */
 #  define glewGetProcAddress(name) eglGetProcAddress((const char *)name)
 #elif defined(_WIN32)
 #  define glewGetProcAddress(name) wglGetProcAddress((LPCSTR)name)
@@ -22615,7 +22619,7 @@ GLenum GLEWAPIENTRY wglewInit (void)
   return GLEW_OK;
 }
 
-#elif !defined(__ANDROID__) && !defined(__native_client__) && !defined(__HAIKU__) && (!defined(__APPLE__) || defined(GLEW_APPLE_GLX))
+#elif !defined(__ANDROID__) && !defined(__native_client__) && !defined(__HAIKU__) && !defined(__SWITCH__) /* OpenPrey Switch */ && (!defined(__APPLE__) || defined(GLEW_APPLE_GLX))
 
 PFNGLXGETCURRENTDISPLAYPROC __glewXGetCurrentDisplay = NULL;
 
@@ -23756,7 +23760,7 @@ GLenum GLEWAPIENTRY glewInit (void)
 #if defined(GLEW_EGL)
   getCurrentDisplay = (PFNEGLGETCURRENTDISPLAYPROC) glewGetProcAddress("eglGetCurrentDisplay");
   return eglewInit(getCurrentDisplay());
-#elif defined(GLEW_OSMESA) || defined(__ANDROID__) || defined(__native_client__) || defined(__HAIKU__)
+#elif defined(GLEW_OSMESA) || defined(__ANDROID__) || defined(__native_client__) || defined(__HAIKU__) || defined(__SWITCH__) /* OpenPrey Switch */
   return r;
 #elif defined(_WIN32)
   return wglewInit();
@@ -31118,7 +31122,7 @@ GLboolean GLEWAPIENTRY wglewIsSupported (const char* name)
   return ret;
 }
 
-#elif !defined(GLEW_OSMESA) && !defined(GLEW_EGL) && !defined(__ANDROID__) && !defined(__native_client__) && !defined(__HAIKU__) && !defined(__APPLE__) || defined(GLEW_APPLE_GLX)
+#elif !defined(GLEW_OSMESA) && !defined(GLEW_EGL) && !defined(__ANDROID__) && !defined(__native_client__) && !defined(__HAIKU__) && !defined(__SWITCH__) /* OpenPrey Switch */ && !defined(__APPLE__) || defined(GLEW_APPLE_GLX)
 
 GLboolean glxewIsSupported (const char* name)
 {

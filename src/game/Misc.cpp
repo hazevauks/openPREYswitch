@@ -148,7 +148,7 @@ idPlayerStart::Event_TeleportPlayer
 void idPlayerStart::Event_TeleportPlayer( idEntity *activator ) {
 	idPlayer *player;
 
-	if ( activator->IsType( idPlayer::Type ) ) {
+	if ( activator && activator->IsType( idPlayer::Type ) ) {
 		player = static_cast<idPlayer*>( activator );
 	} else {
 		player = gameLocal.GetLocalPlayer();
@@ -2904,10 +2904,13 @@ void idFuncRadioChatter::Event_Activate( idEntity *activator ) {
 	const idSoundShader *shader;
 	int length;
 	
-	if ( activator->IsType( idPlayer::Type ) ) {
+	if ( activator && activator->IsType( idPlayer::Type ) ) {
 		player = static_cast<idPlayer *>( activator );
 	} else {
 		player = gameLocal.GetLocalPlayer();
+	}
+	if ( !player || !player->hud ) {
+		return;
 	}
 
 	player->hud->HandleNamedEvent( "radioChatterUp" );

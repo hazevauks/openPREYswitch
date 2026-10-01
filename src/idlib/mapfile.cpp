@@ -30,7 +30,9 @@ ID_INLINE unsigned int StringCRC( const char *str ) {
 	crc = 0;
 	ptr = reinterpret_cast<const unsigned char*>(str);
 	for ( i = 0; str[i]; i++ ) {
-		crc ^= str[i] << (i & 3);
+		// OpenPrey: signed like x86 char, where the shipped CRCs were made (char is
+		// unsigned on aarch64)
+		crc ^= (unsigned int)(int)(signed char)str[i] << (i & 3);
 	}
 	return crc;
 }
@@ -798,18 +800,17 @@ unsigned int idMapEntity::GetGeometryCRC( void ) const {
 	for ( i = 0; i < GetNumPrimitives(); i++ ) {
 		mapPrim = GetPrimitive( i );
 
+		// OpenPrey: the Doom 3 CRC, which Prey's .cm and .aas files carry. The Quake 4
+		// version also mixed in the entity's "model" key for every primitive; with it
+		// no shipped collision or AAS file matched, so the collision was rebuilt from
+		// the .map (with holes and giant polygons in feedingtowerc) and monsters had
+		// no navigation data.
 		switch( mapPrim->GetType() ) {
 			case idMapPrimitive::TYPE_BRUSH:
 				crc ^= static_cast<idMapBrush*>(mapPrim)->GetGeometryCRC();
-				if ( epairs.GetString( "model" ) ) {
-					crc ^= StringCRC( epairs.GetString( "model" ) );
-				}
 				break;
 			case idMapPrimitive::TYPE_PATCH:
 				crc ^= static_cast<idMapPatch*>(mapPrim)->GetGeometryCRC();
-				if ( epairs.GetString( "model" ) ) {
-					crc ^= StringCRC( epairs.GetString( "model" ) );
-				}
 				break;
 		}
 	}
