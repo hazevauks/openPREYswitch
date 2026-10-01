@@ -69,8 +69,7 @@ Read [Known issues](#known-issues) before you start.
   `pak_en_t.pk4`) is recognized but untested on the Switch.
 - **Free space on the SD card** for those files, plus a few GB for the texture
   cache, which grows as you reach new maps.
-- **Recommended:** [sys-clk](https://github.com/retronx-team/sys-clk) or
-  [Horizon-OC](https://github.com/Horizon-OC/Horizon-OC) to raise the CPU clock
+- **Recommended:** [sys-clk](https://github.com/retronx-team/sys-clk) to raise the CPU clock
   (see [Performance tips](#performance-tips)).
 
 ## Installation
@@ -177,8 +176,7 @@ closes it.
 ## Performance tips
 
 - **Raise the CPU clock.** Set the CPU to **1224 MHz** in
-  [sys-clk](https://github.com/retronx-team/sys-clk) or
-  [Horizon-OC](https://github.com/Horizon-OC/Horizon-OC), or to 1785 MHz for more
+  [sys-clk](https://github.com/retronx-team/sys-clk) , or to 1785 MHz for more
   headroom. With title override, openPREY runs as the game you held **R** on, so
   create the profile for that game. The game sets the GPU and memory clocks itself
   (GPU clock profile), so there is no need to overclock the memory.
