@@ -211,10 +211,16 @@ Every change applies at once and is saved with the config (archived cvars).
 | Look speed | `in_yawspeed` and `in_pitchspeed` | 60 to 400 degrees per second at full tilt |
 | Invert look | `in_joystickInvertLook` | Off / On (right stick, vertical) |
 | Subtitles | `g_subtitles` | Off / On |
+| Noclip | `g_noclip` | Off / On (single player; not archived) |
+
+`g_noclip` lives in the game module (`hhPlayer::Think`): it follows the player's
+`noclip` flag, so the item stays right after the `noclip` command, a new map or a
+savegame, and setting it turns noclip on or off.
 
 **Settings defaults** are versioned like the control scheme
 (`com_switchSettings`, `s_settingsDefaults`). An entry applies once to configs
-saved before it existed, so later choices stick. Version 1 turns shadows off.
+saved before it existed, so later choices stick. Version 1 turns shadows off,
+version 2 turns gyro aiming off (`in_gyro 0` is now also the cvar default).
 
 ### Gyro aiming
 
@@ -226,7 +232,7 @@ are supported.
 
 | cvar | default | meaning |
 |---|---|---|
-| `in_gyro` | 1 | 0 off, 1 always, 2 only while ZL (aim) is held |
+| `in_gyro` | 0 | 0 off, 1 always, 2 only while ZL (aim) is held |
 | `in_gyroSensitivityX` / `Y` | 2.0 | camera degrees per degree the controller turns |
 | `in_gyroDeadZone` | 1.0 | ignore rotation slower than this (deg/s) |
 | `in_gyroInvertX` / `Y` | 0 | flip an axis |
@@ -674,12 +680,60 @@ into the system file service. Files the engine opens now get a 64 KB buffer
 pk4s), which also covers writes to `generated/`. To confirm, compare the
 `OS reads: N MB in T s` line on the same load.
 
-**Stale collision files.** game/feedingtowerb printed
+**Rebuilt collision files.** game/feedingtowerb printed
 `maps/game/feedingtowerb.cm is out of date` and rebuilt its collision model
-from the map: 79 s of a 175 s load. The rebuilt `.cm` is written under
-`fs_savepath`, which is searched before the pk4s, so this happens once per
-install. The retail `.cm` does not match its map; the desktop builds rebuild
-it too.
+from the map: 79 s of a 175 s load. The cause was the engine's map CRC, not the
+retail files (see "Map data: collision and AAS"); with it fixed, the shipped
+`.cm` loads and first visits skip that rebuild.
+
+## Map data: collision and AAS
+
+Prey's `.cm` (collision) and `.aas` (monster navigation) files start with the CRC
+of the map's geometry, and the engine only uses them when it matches the CRC it
+computes from the `.map`. `idMapEntity::GetGeometryCRC` (`src/idlib/mapfile.cpp`)
+came from Quake 4, which also XORs the entity's `model` key into the CRC once per
+primitive. Prey's tools used the Doom 3 CRC, so no shipped file ever matched:
+
+- **Collision:** every `.cm` was "out of date". The engine rebuilt the collision
+  from the `.map` and wrote the result to `basepr/maps/game/<map>.cm`, which is
+  searched before the pk4s, so later loads used the rebuild without a message.
+  The rebuild is not what Prey's tools made. In game/feedingtowerc it had ~7900
+  fewer polygons (39792 against 47652) and giant unclipped polygons that
+  stretched the world bounds to 524288 units ("map bounds are (524288.0, ...)";
+  the real world is ~7200 x 6900 units). `g_debugPlayerPhysics` showed Tommy
+  standing at z 254.6, under the shipped clip brushes (266-272) and floor (268)
+  of that room, then falling out of the map; in the tunnel he walked through
+  walls. With bounds that large, the clip sector grid (`_HH_CLIP_FASTSECTORS`,
+  64 x 64 cells over the world) also put the whole map in a few cells, so every
+  trace tested every clip model of the map.
+- **AAS:** every `.aas` was rejected with a developer-only message (`DPrintf`,
+  `DWarning`), so monsters had no navigation data on any map. That also hid a
+  parser bug: `ParseAreas` read the two feature fields of OpenQ4's AAS 1.08,
+  which Prey's 1.07 files do not have (`( flags contents firstFace numFaces
+  cluster clusterAreaNum )`), and would have derailed on the first area. It now
+  takes either layout; a script that follows the same steps parses all 75 retail
+  `.aas` files to the end, every reachability pointing at a valid area.
+
+The fix computes the Doom 3 CRC, with `char` read as signed like on x86, where
+the shipped CRCs were made (recomputing it in Python from the retail `.map`
+files gives exactly the stored 2519709809 for feedingtowerc and 3253044049 for
+lotaa; the Quake 4 CRC gives 2519710351 and 3253043229). A rebuild left by an
+older build still hides the pk4 copy and now fails the CRC check, so
+`LoadCollisionModelFile` removes it (`RemoveFile` only touches the writable game
+directory) and loads the shipped file. The log shows
+`removing the rebuilt maps/game/<map>.cm to load the shipped one` once per map.
+
+On the first load after the fix, look for:
+
+- `map bounds are` close to the real size of the map;
+- `collision data:` numbers that match the shipped `.cm` (feedingtowerc:
+  445 models, 55790 vertices, 47652 polygons, 3953 brushes, ~17 k nodes);
+- `[Load AAS]` and `loading maps/game/<map>.aas48` followed by `done.` for
+  each AAS file the map has (a map lists more AAS types than it ships; the
+  missing ones end without `done.`).
+
+The deathwalk level (`deathwalk1-3`, appended to most maps in retail Prey) is
+still not loaded: `shouldappendlevel` is never set and `AppendMap` is a stub.
 
 ## Next steps
 

@@ -74,6 +74,7 @@ static const settingsItem_t s_items[] = {
 	{ "Look speed",			"Right stick turn speed, degrees per second.",		ITEM_RANGE,		"in_yawspeed", "in_pitchspeed", 0, NULL, NULL, 60.0f, 400.0f, 20.0f, "%.0f" },
 	{ "Invert look",		"Right stick up looks down.",						ITEM_TOGGLE,	"in_joystickInvertLook" },
 	{ "Subtitles",			"Dialogue subtitles.",								ITEM_TOGGLE,	"g_subtitles" },
+	{ "Noclip",				"Fly through walls (cheat). Off again on a new map.",	ITEM_TOGGLE,	"g_noclip" },
 	{ "Console",			"Developer console (commands and cvars).",			ITEM_CONSOLE },
 	{ "Close",				"",													ITEM_CLOSE },
 };
@@ -95,8 +96,9 @@ typedef struct {
 
 static const settingsDefault_t s_settingsDefaults[] = {
 	{ 1,	"r_shadows",	"0" },		// shadows cost ~40% of the frame in busy maps (switch-port.md)
+	{ 2,	"in_gyro",		"0" },		// gyro aiming is opt-in
 };
-static const int SWITCH_SETTINGS_VERSION = 1;
+static const int SWITCH_SETTINGS_VERSION = 2;
 
 static idCVar com_switchSettings( "com_switchSettings", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER | CVAR_NOCHEAT, "settings defaults version the config was last updated to (internal)" );
 

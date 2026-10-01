@@ -17,18 +17,18 @@ Technical reference for the port: [switch-port.md](switch-port.md).
 Updated after every test round. When an issue is solved, it leaves this
 section and the lesson goes to section 5.
 
-**Story progress (2026-09-30):**
+**Story progress (2026-10-01):**
 
 - **A run from the start of the game** (build 09f2f4e, LTO) went through the
   roadhouse and feedingtowera with a steady frame rate, above 30 fps even in
-  the bar. It ended loading the third area (feedingtowerb) with
-  "Out of memory" (below).
-- Earlier rounds reached feedingtowerb from a feedingtowera save
-  (wall walking).
-- The port is close to its first release. What is left is optimization and
-  quality of life.
+  the bar.
+- Later rounds went on through feedingtowerb, Tommy's death, the Land of the
+  Ancients (lotaa, Spirit Walk) and back to feedingtowerc, where Tommy fell out
+  of the map past the pod tunnel (below: the collision was not Prey's).
+- The port is about to have its first release. What is left is optimization
+  and quality of life.
 
-**Solved and confirmed on hardware (2026-09-30):**
+**Solved and confirmed on hardware (2026-10-01):**
 
 - the driver crash in feedingtowera: vertex pages (lesson 17);
 - the savegame name keyboard: clicking the field opens it (lesson 18);
@@ -36,66 +36,64 @@ section and the lesson goes to section 5.
   passes the local player again (lesson 16);
 - the settings menu (- button) and the console through it;
 - the LTO build: above 30 fps in the bar with shadows off and the CPU at
-  1224 MHz (Horizon-OC). LTO is the default (`b_lto` in the cross file).
+  1224 MHz (Horizon-OC). LTO is the default (`b_lto` in the cross file);
+- savegames rejected at random (lesson 22): a save from an older build loaded
+  with the "old checksum" warning, and a new autosave loaded without it;
+- out of memory across map changes (lesson 19): feedingtowerc to lotaa
+  released 351 MB of sounds and 290 MB of images, and the heap went from
+  1697 to 1149 MB in use.
 
-### Savegames rejected at random (fix to confirm)
+### Walking through walls and falling out of feedingtowerc (fix to confirm)
 
-- **Report (2026-10-01, build 7ffb4ca):**
-  - loading a feedingtowerc save logged `savegame script checksum 0xa3cac5a1
-    does not match the compiled scripts (0x83e0e5a1 ...)`;
-  - the map restarted from its beginning instead of loading the save.
-  - The two checksums differ in a single bit, which a real hash of changed
-    data would not do.
-- **Cause:** `MD4_BlockChecksum` (and `MD5_BlockChecksum`) declared the digest
-  as `unsigned long[4]`. That is 8 bytes each on LP64 platforms, and MD4
-  itself used `unsigned long` words. The 16-byte digest filled half the array;
-  the other half was stack garbage mixed into the checksum, so it changed from
-  one run to the next. The Windows build has 4-byte longs and never saw it.
-- **Change:** 32-bit words and digests, so the checksums now match the Windows
-  builds. Savegames written by earlier Switch builds carry a garbage checksum:
-  they load when the script variable space matches (logged as "savegame from
-  a build with the old checksum"), and otherwise restart the map as before.
-- **Test:** load an old save (it should load, with that warning) and a new
-  one (no warning).
-
-### Walking through walls in the tunnel after the start of feedingtowerc (to diagnose)
-
-- **Report (2026-10-01):** after the level start of game/feedingtowerc, the
-  script (`FTC_SphereVoice_LevelStart`) spawns a pod (`podspawner_intro`).
-  Exploding it next to the flesh wall (`trigger_pod_gack_3`, only damaged by
-  `splash_podexplosion`) opens the small tunnel (`FTCSmallTunnelAfterStart`).
-  Going through the tunnel, Tommy passes through walls and dies. It happened
-  again after reloading the autosave; noclip, `com_fixedTic` and swap interval
-  changes did not help.
-- **Log:** before the first death the draw count climbed to ~4200 with 300
-  entities and 171 lights in view, which is what the camera sees from outside
-  the level, so the player really left the geometry.
-- **Context:** that session had restarted the map from a save rejected by the
-  checksum bug above.
-- **Checked and ruled out:**
-  - the map script (it never touches the player's collision);
-  - the `isSimpleBox 0` trigger fallback (lesson 15; no such trigger near the
-    tunnel);
-  - the collision sign-bit macros (already `unsigned int` here);
-  - the pod's splash damage (knockback 10);
-  - the feeding slabs (far from the tunnel).
-- **Change (diagnostics):** `g_debugPlayerPhysics 1` logs the player's origin,
-  velocity, gravity, orientation, collision box, contents, clip mask, whether
-  the clip model is linked, ground contact, noclip, spirit/deathwalk and
-  crouch once per second.
+- **Report (2026-10-01):** after the pod opens the flesh wall
+  (`trigger_pod_gack_3`) at the start of game/feedingtowerc, Tommy walks
+  through walls and dies, in the tunnel it opens and in the room next to it.
+  Reloading the autosave did not help.
+- **Log (`g_debugPlayerPhysics 1`):** the player's state was normal (gravity,
+  box, contents, clip mask, linked) until he stood at z 254.6, under the clip
+  brushes (266-272) and floor (268) of the shipped collision, and then fell
+  to z -8203. The map load printed `map bounds are (524288.0, 524291.2,
+  524288.0)`, while the shipped world model is ~7200 x 6900 x 8100, and
+  `collision data:` did not match the shipped `.cm` (39792 polygons and
+  373827 nodes against 47652 and 17341).
+- **Cause (lesson 23):** the engine's map CRC was Quake 4's. No shipped `.cm`
+  or `.aas` matched it, so every map ran on collision rebuilt from the `.map`
+  (holes, giant polygons) and monsters had no navigation data. The rebuilt
+  `.cm` files were written to `basepr/maps/game/` and hid the pk4 copies on
+  later loads, without a message.
+- **Change:** the Doom 3 CRC (`src/idlib/mapfile.cpp`), and
+  `LoadCollisionModelFile` removes a stale rebuilt `.cm` so the shipped one
+  loads. The AAS parser now also reads Prey's 1.07 area layout (it expected
+  OpenQ4's 1.08 and had never run on a Prey file). Details in switch-port.md,
+  "Map data: collision and AAS".
 - **Test:**
-  1. load a save from before the tunnel;
-  2. set `g_debugPlayerPhysics 1` from the console;
-  3. go through the tunnel;
-  4. send the log. Where the values jump (gravity, box, contents,
-     "UNLINKED", huge velocity) shows the cause.
+  1. load a save from before the pod (or the "Possession" autosave);
+  2. check the log: `removing the rebuilt maps/game/feedingtowerc.cm to load
+     the shipped one` once, `map bounds are` about (7208, 6944, 8096), and
+     `collision data:` with 47652 polygons;
+  3. go through the tunnel and the room next to it;
+  4. watch the monsters: with navigation data they should move around
+     obstacles and chase properly on every map. This AAS code runs on the
+     Switch for the first time, so a crash or stuck monsters right after a
+     map load point here; `[Load AAS]` lines followed by `done.` mean the file
+     parsed.
+  - A save from before the fix keeps its clip models by name, so it loads
+    with the new collision.
+
+### Deathwalk (not implemented)
+
+- When Tommy dies he does not go to the Deathwalk; the game continues from the
+  last save. Retail Prey appends a deathwalk level (`deathwalk1-3`) to most
+  maps; in OpenPrey `shouldappendlevel` is never set and the engine side
+  (`AppendMap` for collision, the render world) does not exist, so
+  `hhPlayer::Killed` sees no deathwalk map and kills Tommy for good.
 
 **Not a fix: `com_fixedTic 1`.** It runs exactly one 60 Hz game tick per
 rendered frame, so at 30 fps the game runs at half speed. The frame rate rises
 because each frame simulates less. `vid_restart` also leaves the screen black
 on the Switch; restart the game instead.
 
-### Out of memory on the third map, graphics errors and crashes after loading saves (fixes to confirm)
+### Out of memory on the third map, graphics errors and crashes after loading saves (memory confirmed, the rest to confirm)
 
 - **Reports (2026-10-01, build 7b7bc42):**
   - "Out of memory (17711349 bytes requested)" loading feedingtowerb in a run
@@ -170,8 +168,8 @@ on the Switch; restart the game instead.
   `OS reads: N MB in T s` and the total `msec to load`.
 - **First visits** still compress textures: 70-100 s of images per new map.
   The idea is to compress on cores 1-2.
-- **feedingtowerb's retail `.cm` is stale.** Rebuilding it cost 79 s once;
-  the rebuilt file is saved under `fs_savepath`.
+- **Collision rebuilds on first visits** (79 s in feedingtowerb) came from the
+  map CRC (lesson 23). With the shipped `.cm` loading, first visits skip them.
 
 ### Front end at 60-120 ms late in feedingtowerb (to measure)
 
@@ -469,6 +467,18 @@ known issues and support. Keep its known issues in step with section 0.
     `long`) breaks in quiet ways. Hash digests declared `unsigned long[4]`
     were half garbage, so savegame checksums changed between runs. Grep for
     `long` in anything that hashes, serializes or does bit tricks.
+23. **Check that the engine accepts the game's own data files.** OpenQ4's
+    `idMapFile` computed Quake 4's map CRC, so every shipped Prey `.cm` was
+    "out of date" (rebuilt from the `.map`, with holes) and every `.aas` was
+    rejected with a developer-only message (monsters without navigation).
+    Nothing failed loudly: the rebuilt `.cm` was saved and hid the real one.
+    Recomputing the CRC from the retail files in a script settled it. A file
+    that is always rejected also hides bugs in the code that would read it:
+    the AAS parser expected OpenQ4's layout and had never run on a Prey file,
+    so accepting the files meant checking that parser too. When
+    something about the world is wrong (collision, navigation), compare what
+    loaded with the shipped file first: `collision data:` against the `.cm`,
+    `map bounds are` against the map.
 
 ## 6. Performance: what is known
 
@@ -532,7 +542,9 @@ The full reference is the Performance section of
 | `image_compressTextures` | 1 | DXT textures (2 also compresses normal maps) |
 | `r_cacheProgramParms` | 1 | Parameter cache (no measured effect) |
 | `g_debugTriggers` | 0 | Logs trigger touches, rejections and bounds fallbacks |
-| `in_gyro` | 1 | 0 = off; 1 = always; 2 = only while aiming with ZL |
+| `in_gyro` | 0 | 0 = off; 1 = always; 2 = only while aiming with ZL |
+| `g_noclip` | 0 | Noclip in single player (settings menu); follows the `noclip` command |
+| `g_debugPlayerPhysics` | 0 | Logs the player's position, velocity, box, contents and clip mask once per second |
 | `r_shadows` | 0 | Stencil shadows; off by default on the Switch (much faster) |
 | `in_joystickInvertLook` | 0 | Invert the right stick's vertical look |
 | `com_switchSettings` | - | Internal: settings defaults version of the config |
@@ -613,7 +625,13 @@ The order that worked here:
   - `Misc.cpp`, `Item.cpp`, `Trigger.cpp`: NULL activators;
   - `game_trigger.cpp` and `game_targets.cpp`: triggers and targets;
   - `Pvs.cpp`;
-  - the `g_debugPlayerCanSee` diagnostics.
+  - the `g_debugPlayerCanSee` diagnostics;
+  - `SaveGame.cpp` and `prey_game.cpp`: unsaved render entity/light fields
+    and the rejected-save leak; `Script_Program.cpp`: old-checksum savegames;
+  - `game_player.cpp`: `g_debugPlayerPhysics` and `g_noclip`;
+  - if GameLibs carries its own idlib: the MD4/MD5 digests and the Doom 3 map
+    CRC (`mapfile.cpp`).
+- **Deathwalk:** level appending (section 0).
 - **Performance:**
   - PGO training run and optimized build;
   - the heavy front end in late feedingtowerb;

@@ -25,7 +25,7 @@ the result if a controller reports them otherwise, and in_gyroDebug 1 prints
 raw values once per second to check.
 
 cvars:
-	in_gyro					0 = off, 1 = always, 2 = only while ZL (aim) is held
+	in_gyro					0 = off (default), 1 = always, 2 = only while ZL (aim) is held
 	in_gyroSensitivityX		camera degrees per degree of controller yaw
 	in_gyroSensitivityY		camera degrees per degree of controller pitch
 	in_gyroDeadZone			ignore rotation slower than this, in degrees per second
@@ -43,7 +43,7 @@ cvars:
 
 #include "switch_local.h"
 
-static idCVar in_gyro( "in_gyro", "1", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER, "gyro aiming: 0 = off, 1 = always, 2 = only while ZL (aim) is held", 0, 2 );
+static idCVar in_gyro( "in_gyro", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER, "gyro aiming: 0 = off, 1 = always, 2 = only while ZL (aim) is held", 0, 2 );
 static idCVar in_gyroSensitivityX( "in_gyroSensitivityX", "2.0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "gyro yaw: camera degrees per degree the controller turns", 0.0f, 20.0f );
 static idCVar in_gyroSensitivityY( "in_gyroSensitivityY", "2.0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "gyro pitch: camera degrees per degree the controller tilts", 0.0f, 20.0f );
 static idCVar in_gyroDeadZone( "in_gyroDeadZone", "1.0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_FLOAT, "ignore gyro rotation slower than this, in degrees per second (hand tremor, sensor drift)", 0.0f, 20.0f );

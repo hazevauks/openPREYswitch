@@ -51,7 +51,7 @@ areas run below 30 fps. Read [Known issues](#known-issues) before you start.
   mode, with a Pro Controller or with a pair of Joy-Con.
 - Touch in menus, and the system keyboard for savegame names and console commands.
 - A settings menu on the **−** button: FPS counter, frame lock, shadows, dynamic
-  resolution, GPU clock profile, gyro, look speed and subtitles.
+  resolution, GPU clock profile, gyro, look speed, subtitles and noclip.
 - The console's official GPU and memory clock profiles, applied by the game itself.
 - Logs and crash reports saved to the SD card, ready to attach to a bug report.
 
@@ -140,8 +140,8 @@ Extract the new release over the old one. Your settings, saves and texture cache
 - **Menus:** the left stick moves the cursor, **A** clicks and **B** goes back. You
   can also tap the screen. Selecting a text field, such as a savegame name, opens the
   system keyboard.
-- **Gyro aiming** adds to the right stick and is on by default. Turn it off, or use
-  it only while **ZL** is held, in the settings menu.
+- **Gyro aiming** adds to the right stick. It is off by default: turn it on in the
+  settings menu, always or only while **ZL** is held.
 - **Talking to people:** Prey has no talk button; conversations start when you walk
   near people.
 
@@ -158,11 +158,16 @@ Choose an item with the D-pad up and down, and change it with left and right or
 | Shadows | **Off**, On |
 | Dynamic resolution | Off, **On** |
 | GPU clock profile | System default, GPU 384 MHz, GPU 460 MHz, **GPU 460 + RAM 1600** |
-| Gyro aiming | Off, **Always**, While aiming (ZL) |
+| Gyro aiming | **Off**, Always, While aiming (ZL) |
 | Gyro sensitivity | 0.25 to 6.00 (**2.00**) |
 | Look speed | 60 to 400 degrees per second |
 | Invert look | **Off**, On |
 | Subtitles | Off, **On** |
+| Noclip | **Off**, On |
+
+**Noclip** lets Tommy fly through walls, to get him out if he is ever stuck in the
+scenery. It is a cheat: it turns itself off on the next map, and you can also turn it
+off here.
 
 **Y** in this menu opens the developer console. There, **A** brings up the keyboard
 to type a command, the D-pad up and down recalls earlier commands, and **B** or **−**
@@ -195,12 +200,8 @@ dipping to about 25 in the busiest moments.
 
 ## Known issues
 
-- **Falling through walls in `game/feedingtowerc`.** After you blow up a pod next to
-  the flesh wall near the start of the map, going through the small tunnel it opens
-  can make Tommy pass through the walls and die, even after loading the autosave.
-  This is being investigated. If it happens to you, a log recorded with
-  `g_debugPlayerPhysics 1` (typed in the console before entering the tunnel) helps a
-  lot.
+- **No Deathwalk.** When Tommy dies he does not go to the Deathwalk; the game
+  continues from the last save. The engine does not load Prey's deathwalk level yet.
 - **Long first loads** of each map while its texture cache is built (see
   [Installation](#installation)).
 - **Some busy areas later in the game drop well below 30 fps.**

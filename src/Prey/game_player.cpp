@@ -5010,6 +5010,11 @@ hhPlayer::Think
 // out of the level). Logs the physics state once per second.
 static idCVar g_debugPlayerPhysics( "g_debugPlayerPhysics", "0", CVAR_GAME | CVAR_BOOL, "diagnostic: log the player's position, velocity, gravity, collision box, contents and clip mask once per second" );
 
+// OpenPrey: noclip as a cvar, for menus (the Switch settings menu). It follows the
+// player's noclip, which the noclip command still toggles, and setting it turns
+// noclip on or off.
+static idCVar g_noclip( "g_noclip", "0", CVAR_GAME | CVAR_BOOL | CVAR_NOCHEAT, "single player: noclip (fly through walls); follows the noclip command" );
+
 void hhPlayer::Think( void ) {
 	renderEntity_t *headRenderEnt;
 
@@ -5032,6 +5037,16 @@ void hhPlayer::Think( void ) {
 				up.c_str(), boxMin.c_str(), boxMax.c_str(), phys->GetContents(), phys->GetClipMask(),
 				clip ? ( clip->IsLinked() ? "linked" : "UNLINKED" ) : "NONE", phys->HasGroundContacts() ? 1 : 0, noclip ? 1 : 0,
 				IsSpiritWalking() ? 1 : 0, IsDeathWalking() ? 1 : 0, physicsObj.IsCrouching() ? 1 : 0 );
+		}
+	}
+
+	if ( !gameLocal.isMultiplayer && gameLocal.GetLocalPlayer() == this ) {
+		if ( g_noclip.IsModified() ) {
+			g_noclip.ClearModified();
+			noclip = g_noclip.GetBool();
+		} else if ( g_noclip.GetBool() != noclip ) {
+			g_noclip.SetBool( noclip );		// changed by the noclip command, a new map or a savegame
+			g_noclip.ClearModified();
 		}
 	}
 
