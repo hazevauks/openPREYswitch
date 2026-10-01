@@ -6,7 +6,7 @@ loop, pitfalls and measurements.
 
 Technical reference for the port: [switch-port.md](switch-port.md).
 
-**In a new session with Claude, start with:**
+**Before starting work on the port** (people and coding assistants alike):
 
 > Read `docs-dev/switch-port-handbook.md` and `docs-dev/switch-port.md` before starting.
 
@@ -25,8 +25,8 @@ section and the lesson goes to section 5.
   "Out of memory" (below).
 - Earlier rounds reached feedingtowerb from a feedingtowera save
   (wall walking).
-- The user considers the port close to a first release. What is left is
-  optimization and quality of life.
+- The port is close to its first release. What is left is optimization and
+  quality of life.
 
 **Solved and confirmed on hardware (2026-09-30):**
 
@@ -198,8 +198,8 @@ on the Switch; restart the game instead.
 
 ### Rendering glitches in the Mesa 26 build (parked)
 
-- The user decided not to test Mesa 26 again. OpenPrey now works with Mesa
-  20.1 built from source (section 6).
+- Mesa 26 is no longer being tested. The port stays on Mesa 20.1, which can
+  also be built from source (section 6).
 - **Symptoms:**
   - vertical black stripes over lit surfaces;
   - areas darker than they should be;
@@ -216,10 +216,9 @@ on the Switch; restart the game instead.
 
 ## 1. Rules that do not change
 
-- **Never touch** `C:\Users\Usuario\Downloads\trabalho\openPREYwindows (NÃO MEXER)`.
-- **Push only to the user's fork** (`hazevauks/openPREYswitch`), branch
-  `switch-port`. PRs to the original repository (`themuffinator/OpenPrey`)
-  only on request.
+- **Branches:** work happens on `switch-port` in `hazevauks/openPREYswitch`,
+  which merges into `main` for releases. Fixes that help every platform can
+  also go upstream to `themuffinator/OpenPrey` as pull requests.
 - **Never commit game files** (`.pk4`, textures, audio). Players use their own
   copy of Prey.
 - `src/game` mirrors the OpenPrey-GameLibs repository (rule from `AGENTS.md`).
@@ -228,25 +227,26 @@ on the Switch; restart the game instead.
 - Temporary files go in `.tmp/`, which git ignores.
 - Meson is the official build system. Changed the workflow? Update
   `docs-dev/switch-port.md` in the same commit.
-- Everything written (READMEs, docs, commits) is in English; chat with the
-  user is in Portuguese.
-- Claude never types passwords or credentials. Logging in is the user's job.
+- Everything written (READMEs, docs, commits) is in English.
 
 ## 2. Environment (Windows)
 
 | Item | Where / how |
 |---|---|
-| devkitPro | `C:\Users\Usuario\Downloads\devkitPro` |
-| Build shell | `devkitPro\msys2\usr\bin\bash.exe`, **always with `MSYSTEM=MSYS`** (in MinGW mode the msys `meson`/`python` do not run) |
-| `/opt/devkitpro` path | Mapped in `devkitPro\msys2\etc\fstab`. Backup: `fstab.bak-antes-openprey`. If the devkitPro folder moves, fix that line. |
-| Python | Windows Python is not installed. Use `devkitPro/msys2/usr/bin/python3.exe`. |
+| devkitPro | The devkitPro install folder, `<devkitPro>` below (the installer's default is `C:\devkitPro`) |
+| Build shell | `<devkitPro>\msys2\usr\bin\bash.exe`, **always with `MSYSTEM=MSYS`** (in MinGW mode the msys `meson`/`python` do not run) |
+| `/opt/devkitpro` path | Mapped in `<devkitPro>\msys2\etc\fstab`; keep a backup of the original. If the devkitPro folder moves, fix that line. |
+| Python | If Windows has none, use `<devkitPro>/msys2/usr/bin/python3.exe`. |
 | Cross file | `tools/switch/meson/switch-cross.ini` (`host_machine.system = 'horizon'`, `-D__SWITCH__`) |
 | Build dirs | `builddir-switch/` (main), `builddir-switch-mesa26/` (Mesa 26 experiment), `builddir-switch-mesa20/` (Mesa 20.1 built from source), `builddir-switch-pgo/` (PGO: instrumented or optimized) |
 
 ### Building
 
+From Git Bash or any shell, with `<devkitPro>` and `<repo>` in MSYS form
+(`/c/devkitPro`, `/c/path/to/openPREYswitch`):
+
 ```bash
-MSYSTEM=MSYS /c/Users/Usuario/Downloads/devkitPro/msys2/usr/bin/bash.exe -lc "cd /c/Users/Usuario/Downloads/trabalho/openPREYswitch && export MESON_RSP_THRESHOLD=2147483647 && meson compile -C builddir-switch"
+MSYSTEM=MSYS <devkitPro>/msys2/usr/bin/bash.exe -lc "cd <repo> && export MESON_RSP_THRESHOLD=2147483647 && meson compile -C builddir-switch"
 ```
 
 - `MESON_RSP_THRESHOLD=2147483647` is **required**. Without it, long link
@@ -266,9 +266,26 @@ MSYSTEM=MSYS /c/Users/Usuario/Downloads/devkitPro/msys2/usr/bin/bash.exe -lc "cd
 1. Build.
 2. **Archive the ELF:** copy it to `.tmp/elf-builds/OpenPrey-<commit>.elf`.
    Crashes cannot be read without the ELF of the same build.
-3. Copy the NRO to `.tmp/cartao-sd/switch/openprey/OpenPrey.nro`.
+3. Copy the NRO to `switch/openprey/` on the test SD card (or a staging copy
+   of the card under `.tmp/`).
 4. Commit with a descriptive message and `git push origin switch-port`.
-5. Give the tester a short numbered test plan with the exact console commands.
+5. Write a short numbered test plan for testers, with the exact console
+   commands.
+
+### Public releases
+
+The root `README.md` is the release page: installation, controls, tips,
+known issues and support. Keep its known issues in step with section 0.
+
+1. Merge `switch-port` into `main`.
+2. Build from `main` and archive the ELF, as above.
+3. Package: `python3 tools/switch/package_release.py` writes
+   `.tmp/release/openPREY-switch-<version>.zip` (switch-port.md, "Homebrew
+   entry and release zip").
+4. Test the zip as a player would: extract it into an empty SD card folder,
+   add the `.pk4` files, and start through title override.
+5. Tag the commit `v<version>` and publish a GitHub release with the zip, the
+   changes and the known issues.
 
 ## 3. Testing on the console
 

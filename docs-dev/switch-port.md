@@ -55,6 +55,28 @@ The result is `builddir-switch/OpenPrey.nro`. Useful partial targets:
 - `ninja -C builddir-switch libopenprey_game_idlib.a`
 - `ninja -C builddir-switch basepy/libgame_arm64.a`
 
+### Homebrew entry and release zip
+
+The homebrew menu lists the NRO as **openPREY** by **hazevauks**, with the
+project version and the icon `assets/switch/icon.jpg` (256x256 JPEG).
+`meson.build` passes them to `nacptool` and `elf2nro`. The file keeps the name
+`OpenPrey.nro`, as in the SD card layout below.
+
+`tools/switch/package_release.py` packs a release from the NRO and the overlay:
+
+```sh
+python3 tools/switch/package_release.py [--nro <path>] [--version <x>]
+```
+
+It writes `.tmp/release/openPREY-switch-<version>.zip`, laid out for the root of
+the SD card:
+
+- `switch/openprey/OpenPrey.nro`;
+- the overlay in `switch/openprey/basepr/`: the files `basepy/meson.build`
+  installs (keep the script in sync with it);
+- a note in `switch/openprey/base/` that tells players where their `.pk4`
+  files go.
+
 ### Alternative Mesa (experimental)
 
 [danfromtico/mesa-switch](https://github.com/danfromtico/mesa-switch) is a Mesa 26 port with its
@@ -76,7 +98,7 @@ ninja -C builddir-switch-mesa26
 Status: not recommended yet (slower and with rendering glitches on hardware; see
 Performance).
 
-This produces `OpenPrey-mesa-sdk.nro` (title "OpenPrey (mesa-sdk)"), which can sit
+This produces `OpenPrey-mesa-sdk.nro` (title "openPREY (mesa-sdk)"), which can sit
 next to `OpenPrey.nro`. `-Dswitch_variant=<name>` picks another name. Runtime
 switches for that Mesa (environment, set before `eglInitialize`):
 `MESA_SWITCH_GL_DRIVER=zink|nvc0`, `MESA_SWITCH_GLTHREAD=0|1`.
@@ -122,13 +144,15 @@ for driver changes, because the pacman package is binary only.
 sdmc:/switch/openprey/
 ├── OpenPrey.nro          (builddir-switch/OpenPrey.nro)
 ├── base/                 retail Prey .pk4 files, copied from your own install
-└── basepr/               OpenPrey overlay (.install/basepr from a desktop build;
-                          the repo keeps its sources in basepy/)
+└── basepr/               OpenPrey overlay (from the release zip; the repo keeps
+                          its sources in basepy/)
 ```
 
-This folder is also `fs_savepath`: configs, saves and the log are written there.
-The log (`base/logs/openprey.log`, on by default) is flushed line by line, so its
-last line is the last thing the engine printed. Two more files appear on failure:
+This folder is also `fs_savepath`: configs, saves and the log are written to
+`basepr/`. The log (`basepr/logs/openprey.log`, on by default) is flushed line by
+line, so its last line is the last thing the engine printed. At startup the
+previous one is renamed to `openprey-previous.log`. Two more files appear on
+failure:
 
 - `openprey_error.txt`: the message of a fatal error. It is written before the
   engine shuts down, so it survives a crash during shutdown.

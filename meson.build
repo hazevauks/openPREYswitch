@@ -606,13 +606,18 @@ if is_switch and build_engine
   if switch_variant == '' and get_option('switch_mesa_sdk') != ''
     switch_variant = 'mesa-sdk'
   endif
+  # The homebrew menu lists the port as "openPREY" by hazevauks, with the icon in
+  # assets/switch (256x256 JPEG). The file keeps the OpenPrey name that the SD
+  # card layout and the docs use.
   switch_nro_name = switch_variant == '' ? 'OpenPrey' : 'OpenPrey-' + switch_variant
-  switch_app_title = switch_variant == '' ? 'OpenPrey' : 'OpenPrey (' + switch_variant + ')'
+  switch_app_title = switch_variant == '' ? 'openPREY' : 'openPREY (' + switch_variant + ')'
+  switch_app_author = 'hazevauks'
+  switch_app_icon = meson.project_source_root() / 'assets' / 'switch' / 'icon.jpg'
 
   switch_nacp = custom_target(
     'switch_nacp',
     output: switch_nro_name + '.nacp',
-    command: [nacptool, '--create', switch_app_title, 'OpenPrey Switch port', meson.project_version(), '@OUTPUT@'],
+    command: [nacptool, '--create', switch_app_title, switch_app_author, meson.project_version(), '@OUTPUT@'],
   )
 
   custom_target(
@@ -622,9 +627,10 @@ if is_switch and build_engine
     command: [
       elf2nro, '@INPUT@', '@OUTPUT@',
       '--nacp=' + switch_nacp.full_path(),
-      '--icon=' + '/opt/devkitpro/libnx/default_icon.jpg',
+      '--icon=' + switch_app_icon,
     ],
     depends: switch_nacp,
+    depend_files: switch_app_icon,
     build_by_default: true,
   )
 endif

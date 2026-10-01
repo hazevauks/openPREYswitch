@@ -50,7 +50,7 @@ meson setup builddir-switch-mesa20 --cross-file tools/switch/meson/switch-cross.
     -Dswitch_mesa_sdk=<work>/mesa20-install/opt/devkitpro/portlibs/switch
 ```
 
-It produces `OpenPrey-mesa20-src.nro`, titled "OpenPrey (mesa20-src)", which
+It produces `OpenPrey-mesa20-src.nro`, titled "openPREY (mesa20-src)", which
 can sit next to `OpenPrey.nro` on the SD card.
 
 Checked against the pacman package: the same exported functions
