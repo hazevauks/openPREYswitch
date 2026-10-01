@@ -17,7 +17,7 @@ in [switch-port-handbook.md](switch-port-handbook.md).
 | Engine sources (framework, renderer, sound, ui, ...) | Compile |
 | Platform layer `src/sys/switch/` | Files, time, threads with core placement, controller/touch/gyro input, system keyboard, EGL video, clock profiles, crash reports. Networking is loopback only. |
 | GL loading (GLEW + generated GL 1.1 through `eglGetProcAddress`) | Done |
-| `OpenPrey.nro` | Playable on hardware: new game, save/load and exit work. Handheld, profile 3: ~30 fps in light scenes, ~9-10 fps in the heaviest (the bar full of NPCs). See Performance. |
+| `OpenPrey.nro` | First release. Played on hardware from the start through the Land of the Ancients up to the Leech Gun (feedingtowerc): new game, save/load, map changes and exit work. Handheld, LTO, shadows off, CPU at 1224 MHz: 30 fps in the opening maps, the bar included, dipping to ~25. See Performance. |
 | OpenGL capability probe (`tools/switch/gltest`) | Passed on hardware: GL 4.3 compatibility profile (Mesa 20.1 nouveau), ARB programs, legacy GLSL, S3TC. Only `GL_EXT_texture_lod` (optional) is missing. |
 
 ## Toolchain setup (Windows)
@@ -736,6 +736,8 @@ The deathwalk level (`deathwalk1-3`, appended to most maps in retail Prey) is
 still not loaded: `shouldappendlevel` is never set and `AppendMap` is a stub.
 
 ## Next steps
+
+The first release is playable; the next updates focus on performance.
 
 1. **PGO:** a training run with `OpenPrey-pgo.nro`, then the optimized build
    (see "LTO and PGO"). Compare it with the LTO build at the same spots.

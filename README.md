@@ -39,9 +39,10 @@ touch and gyro input, the system keyboard, OpenGL through the console's Mesa
 (nouveau) driver, clock profiles and crash reports.
 
 **Status: first public release.** On real hardware, the campaign has been played
-from the start up to the first Spirit Walk puzzles (map `game/feedingtowerc`),
-mostly in handheld mode. Later chapters have not been tested yet, and some busy
-areas run below 30 fps. Read [Known issues](#known-issues) before you start.
+from the start, through the Land of the Ancients and the first Spirit Walk
+puzzles, up to the Leech Gun (map `game/feedingtowerc`), mostly in handheld mode.
+Later chapters have not been tested yet, and some busy areas run below 30 fps.
+Read [Known issues](#known-issues) before you start.
 
 ## Features
 
@@ -200,9 +201,6 @@ dipping to about 25 in the busiest moments.
 
 ## Known issues
 
-- **Tommy dies in the small tunnel under the pod hole in `game/feedingtowerc`.**
-  This is being investigated. If it happens to you, the log of that session
-  (`switch/openprey/basepr/logs/openprey.log`) says what killed him.
 - **No Deathwalk.** When Tommy dies he does not go to the Deathwalk; the game
   continues from the last save. The engine does not load Prey's deathwalk level yet.
 - **Long first loads** of each map while its texture cache is built (see

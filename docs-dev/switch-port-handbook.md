@@ -22,11 +22,12 @@ section and the lesson goes to section 5.
 - **A run from the start of the game** (build 09f2f4e, LTO) went through the
   roadhouse and feedingtowera with a steady frame rate, above 30 fps even in
   the bar.
-- Later rounds went on through feedingtowerb, Tommy's death, the Land of the
-  Ancients (lotaa, Spirit Walk) and back to feedingtowerc, where Tommy fell out
-  of the map past the pod tunnel (below: the collision was not Prey's).
-- The port is about to have its first release. What is left is optimization
-  and quality of life.
+- **Build ecbcbdc** went from the end of the Land of the Ancients (lotaa)
+  into feedingtowerc on Prey's own collision: through the pod room (both
+  mutilated there), the pod tunnel and on to the Leech Gun area, where a
+  hunter's grenade killed Tommy in a normal fight. The log was clean.
+- **First release:** the game is playable through these maps. The next
+  updates focus on performance.
 
 **Solved and confirmed on hardware (2026-10-01):**
 
@@ -41,94 +42,19 @@ section and the lesson goes to section 5.
   with the "old checksum" warning, and a new autosave loaded without it;
 - out of memory across map changes (lesson 19): feedingtowerc to lotaa
   released 351 MB of sounds and 290 MB of images, and the heap went from
-  1697 to 1149 MB in use.
-
-### Death in the pod tunnel of feedingtowerc (to diagnose)
-
-- **Report (2026-10-01, build b069c22):** with Prey's own collision loaded
-  (the log matched the shipped `.cm`, bounds 7220 x 6956 x 8128), Tommy no
-  longer falls or walks through walls (next issue), but he still dies in the
-  tunnel under the pod hole, at (238, -1029, 80). The build before died at
-  (238, -1030, 74) too. The physics state is normal up to the death: on the
-  floor, no fall, no spirit walk.
-- **Checked in the map data and ruled out at that point:** `trigger_hurt`,
-  death volumes (`trigger_deathresurrection`, `hhSafeDeathVolume`), movers,
-  the slab paths, portals, possession, egg spawners and script kills (no
-  shipped script kills the player). The tunnel's materials are plain flesh
-  (`matter_flesh`), and the only volumes there are two `trigger_portal`
-  (visibility). The three fodders woken by `trigger_once_96` bite for 7 (14
-  at most with DDA), so they cannot kill in one hit.
-- **Change (diagnostics):** every death logs `player killed at (...): damage
-  N by <attacker>, inflictor <inflictor>; last hit: <damage def> from ... by
-  ...` and the entities within 256 units; a death volume logs `death volume
-  '<name>' kills the player`; `g_debugPlayerPhysics 1` also logs each hit
-  (`player damage: ...`, with the DDA scale) and the player's health once
-  per second.
-- **Missing enemies (2026-10-01):** a retail playthrough video shows two
-  enemies in the pod room before the tunnel; the tester never had them. The
-  room has exactly three creatures: `monster_mutilated_male_4` (patrols the
-  monitors), `ftdMutilatedWorker1` (the can worker) and `monster_crawler_21`.
-  The mutilated are enemies (team 7, 150 health, melee). With the rebuilt
-  collision they spawned on missing floor (the tester stood at z 254.6 at
-  (-357, -754), next to `monster_mutilated_male_4` at (-325, -711)) and fell.
-  The "Possession" autosave is written a moment after the level starts, so it
-  stored them already sinking: loading it with the shipped collision, all three
-  start inside the real floor and fall out of the world ("clip model outside
-  world bounds" at z -3200).
-- **Both tunnel deaths started from that autosave.** No run that entered
-  feedingtowerc fresh has reached the tunnel yet, so the death may come from
-  state that autosave stored with the rebuilt collision.
-- **Test:**
-  1. load a save from the end of lotaa, so feedingtowerc starts fresh with
-     the shipped collision (the two mutilated should be in the pod room);
-  2. type `g_debugPlayerPhysics 1` in the console;
-  3. go down the pod hole and walk the tunnel;
-  4. send the log. If Tommy dies, the `player killed` line names what killed
-     him.
-
-### Walking through walls and falling out of feedingtowerc (fixed, collision confirmed)
-
-- **Confirmed (2026-10-01):** the log showed `removing the rebuilt
-  maps/game/feedingtowerc.cm to load the shipped one`, then `collision
-  data:` equal to the shipped file (445 models, 55790 vertices, 47652
-  polygons, 3953 brushes, 17341 nodes), `map bounds are (7220.0, 6956.0,
-  8128.0)`, and `done.` for the two AAS files the map ships. Tommy walked the
-  room and the tunnel floor (z 80.3) without falling. No crash.
-
-- **Report (2026-10-01):** after the pod opens the flesh wall
-  (`trigger_pod_gack_3`) at the start of game/feedingtowerc, Tommy walks
-  through walls and dies, in the tunnel it opens and in the room next to it.
-  Reloading the autosave did not help.
-- **Log (`g_debugPlayerPhysics 1`):** the player's state was normal (gravity,
-  box, contents, clip mask, linked) until he stood at z 254.6, under the clip
-  brushes (266-272) and floor (268) of the shipped collision, and then fell
-  to z -8203. The map load printed `map bounds are (524288.0, 524291.2,
-  524288.0)`, while the shipped world model is ~7200 x 6900 x 8100, and
-  `collision data:` did not match the shipped `.cm` (39792 polygons and
-  373827 nodes against 47652 and 17341).
-- **Cause (lesson 23):** the engine's map CRC was Quake 4's. No shipped `.cm`
-  or `.aas` matched it, so every map ran on collision rebuilt from the `.map`
-  (holes, giant polygons) and monsters had no navigation data. The rebuilt
-  `.cm` files were written to `basepr/maps/game/` and hid the pk4 copies on
-  later loads, without a message.
-- **Change:** the Doom 3 CRC (`src/idlib/mapfile.cpp`), and
-  `LoadCollisionModelFile` removes a stale rebuilt `.cm` so the shipped one
-  loads. The AAS parser now also reads Prey's 1.07 area layout (it expected
-  OpenQ4's 1.08 and had never run on a Prey file). Details in switch-port.md,
-  "Map data: collision and AAS".
-- **Test:**
-  1. load a save from before the pod (or the "Possession" autosave);
-  2. check the log: `removing the rebuilt maps/game/feedingtowerc.cm to load
-     the shipped one` once, `map bounds are` about (7208, 6944, 8096), and
-     `collision data:` with 47652 polygons;
-  3. go through the tunnel and the room next to it;
-  4. watch the monsters: with navigation data they should move around
-     obstacles and chase properly on every map. This AAS code runs on the
-     Switch for the first time, so a crash or stuck monsters right after a
-     map load point here; `[Load AAS]` lines followed by `done.` mean the file
-     parsed.
-  - A save from before the fix keeps its clip models by name, so it loads
-    with the new collision.
+  1697 to 1149 MB in use;
+- collision and AAS from Prey's own files (lesson 23): the shipped `.cm`
+  loads (feedingtowerc: 47652 polygons, bounds 7220 x 6956 x 8128), Tommy no
+  longer walks through walls or falls out of the map, and the AAS files load
+  (`done.`). Stale rebuilt `.cm` files are removed on the first load
+  (`removing the rebuilt maps/game/lotaa.cm to load the shipped one`);
+- the death in the pod tunnel of feedingtowerc and the two missing enemies
+  of the pod room (lesson 24): both came from the "Possession" autosave that
+  builds before b069c22 wrote, which stored the room's creatures sinking
+  through the rebuilt collision. Entering the map fresh, the two mutilated
+  stand in the pod room and the tunnel is safe. Every death now logs its
+  cause (`player killed at ...`, with the attacker, the damage and the
+  entities around).
 
 ### Deathwalk (not implemented)
 
@@ -529,6 +455,13 @@ known issues and support. Keep its known issues in step with section 0.
     something about the world is wrong (collision, navigation), compare what
     loaded with the shipped file first: `collision data:` against the `.cm`,
     `map bounds are` against the map.
+24. **A savegame keeps the bugs of the build that wrote it.** The
+    "Possession" autosave is written a moment after feedingtowerc starts,
+    while creatures were sinking through the rebuilt collision. Loaded with
+    the fixed collision, they started inside the real floor, and Tommy kept
+    dying in the tunnel. The map data ruled out every static cause but could
+    not see saved state. Test a world fix from a fresh map load (a save from
+    the map before), and log the cause of death instead of guessing.
 
 ## 6. Performance: what is known
 
