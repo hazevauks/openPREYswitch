@@ -426,6 +426,7 @@ void RB_ARB2_DrawInteractions( void ) {
 
 		// clear the stencil buffer if needed
 		if ( vLight->globalShadows || vLight->localShadows ) {
+			idPerfPassScope perfPass( PERFPASS_SHADOWS );
 			backEnd.currentScissor = vLight->scissorRect;
 			if ( r_useScissor.GetBool() ) {
 				glScissor( backEnd.viewDef->viewport.x1 + backEnd.currentScissor.x1,

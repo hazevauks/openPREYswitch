@@ -134,6 +134,7 @@ HORIZON_PLATFORM_SOURCES = (
     "sys/switch/switch_input.cpp",
     "sys/switch/switch_main.cpp",
     "sys/switch/switch_net.cpp",
+    "sys/switch/switch_profiler.cpp",
     "sys/switch/switch_settings.cpp",
     "sys/switch/switch_threads.cpp",
     "external/glew/glew.c",

@@ -1124,6 +1124,50 @@ void	R_AddVertexCachePerf( int bufferAllocs, int bufferPaged, int bufferAllocByt
 void	R_AddFrontEndPhaseTimes( double findSec, double lightSurfSec, double modelSurfSec, double sortSec );
 void	R_AddFrontEndCounts( const performanceCounters_t &pc );
 
+// back end time split by pass (tr_backend.cpp), for the same logs
+typedef enum {
+	PERFPASS_OTHER,				// view setup, clears, light scale, debug tools
+	PERFPASS_DEPTH,				// depth fill
+	PERFPASS_SHADOWS,			// stencil shadow volumes
+	PERFPASS_INTERACTIONS,		// light interactions
+	PERFPASS_AMBIENT,			// shader passes that do not depend on lights
+	PERFPASS_FOG,				// fog and blend lights
+	PERFPASS_POST,				// post-process surfaces, SSAO, bloom, glow
+	PERFPASS_COPY,				// framebuffer copies (_currentRender, render scale, subviews)
+	PERFPASS_GUI,				// 2D views
+	PERFPASS_SWAP,				// the swap, and the r_perfGpuSync wait before it
+	PERFPASS_COUNT
+} perfPass_t;
+
+// accumulated until R_TakePassPerf
+typedef struct {
+	double	cpuSec[PERFPASS_COUNT];		// back end thread time: GL calls and driver work
+	int		draws[PERFPASS_COUNT];
+	// r_gpuProfile: time between the GPU reaching the start of a pass and the start
+	// of the next one, in timestamp ticks. It includes any time the GPU waited for
+	// the CPU to submit more commands, so it is GPU work only while the GPU is the
+	// one behind.
+	double	gpuTicks[PERFPASS_COUNT];
+	double	gpuFrameTicks;				// all passes
+	int		gpuFrames;					// frames whose timestamps were read
+	int		gpuFramesDropped;			// frames whose timestamps were not ready in time
+	double	gpuNsPerTick;				// tick length measured against the CPU clock; 0 until known
+} rendererPassPerf_t;
+
+perfPass_t	RB_SetPerfPass( perfPass_t pass );		// returns the pass it replaces
+const char *R_PerfPassName( perfPass_t pass );
+void	R_TakePassPerf( rendererPassPerf_t &perf );
+void	RB_ResetGpuProfile( void );					// the GL context was (re)created
+
+// a back end pass for the rest of the enclosing block
+class idPerfPassScope {
+public:
+			idPerfPassScope( perfPass_t pass ) { previous = RB_SetPerfPass( pass ); }
+			~idPerfPassScope() { RB_SetPerfPass( previous ); }
+private:
+	perfPass_t	previous;
+};
+
 // cached glProgramEnvParameter4fvARB (tr_backend.cpp, r_cacheProgramParms)
 void	RB_ProgramEnvParameter4fv( GLenum target, GLuint index, const GLfloat *params );
 void	RB_InvalidateProgramEnvCache( void );

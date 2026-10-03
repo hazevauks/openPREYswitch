@@ -52,6 +52,7 @@ typedef struct {
 	const char * const *	choiceLabels;
 	float					min, max, step;
 	const char *			format;			// ITEM_RANGE value
+	bool					( *available )( void );	// NULL: whenever the cvar exists
 } settingsItem_t;
 
 static const int			s_fpsLockValues[] = { 30, 0 };
@@ -60,6 +61,8 @@ static const int			s_clockValues[] = { 0, 1, 2, 3 };
 static const char * const	s_clockLabels[] = { "System default", "GPU 384 MHz", "GPU 460 MHz", "GPU 460 + RAM 1600" };
 static const int			s_gyroValues[] = { 0, 1, 2 };
 static const char * const	s_gyroLabels[] = { "Off", "Always", "While aiming (ZL)" };
+static const int			s_glDriverValues[] = { 0, 1 };
+static const char * const	s_glDriverLabels[] = { "NVC0", "Zink (Vulkan)" };
 
 #define CHOICES( name )		sizeof( name##Values ) / sizeof( name##Values[0] ), name##Values, name##Labels
 
@@ -75,6 +78,11 @@ static const settingsItem_t s_items[] = {
 	{ "Invert look",		"Right stick up looks down.",						ITEM_TOGGLE,	"in_joystickInvertLook" },
 	{ "Subtitles",			"Dialogue subtitles.",								ITEM_TOGGLE,	"g_subtitles" },
 	{ "Noclip",				"Fly through walls (cheat). Off again on a new map.",	ITEM_TOGGLE,	"g_noclip" },
+	// diagnostics for performance reports (not saved with the config)
+	{ "Performance log",	"Logs where each frame's time goes, once a second.",	ITEM_TOGGLE,	"com_logPerf" },
+	{ "GPU pass timing",	"Adds the GPU time of each render pass to that log.",	ITEM_TOGGLE,	"r_gpuProfile" },
+	{ "CPU profiler",		"Samples the CPU: logs/openprey_cpuprofile.txt.",	ITEM_TOGGLE,	"com_cpuProfile" },
+	{ "GL driver",			"Applies at the next start. Zink is experimental.",	ITEM_CHOICE,	"r_switchGLDriver", NULL, CHOICES( s_glDriver ), 0.0f, 0.0f, 0.0f, NULL, Switch_GLDriverChoice },
 	{ "Console",			"Developer console (commands and cvars).",			ITEM_CONSOLE },
 	{ "Close",				"",													ITEM_CLOSE },
 };
@@ -126,6 +134,9 @@ static idUserInterface *	s_pauseMenu = NULL;		// pause menu this menu opened, cl
 
 // items whose cvar is missing are skipped (g_subtitles lives in the game module)
 static bool Switch_ItemAvailable( const settingsItem_t &item ) {
+	if ( item.available != NULL && !item.available() ) {
+		return false;
+	}
 	return item.cvar == NULL || cvarSystem->Find( item.cvar ) != NULL;
 }
 
@@ -290,10 +301,10 @@ Drawn in the 640x480 virtual screen with the console font (8x16 characters).
 ================
 */
 static const float	MENU_X = 100.0f;
-static const float	MENU_Y = 64.0f;
+static const float	MENU_Y = 36.0f;
 static const float	MENU_W = 440.0f;
 static const float	MENU_TITLE_H = 26.0f;
-static const float	MENU_ROW_H = 20.0f;
+static const float	MENU_ROW_H = 19.0f;
 static const int	CHAR_W = 8;
 
 void Switch_DrawSettingsMenu( void ) {

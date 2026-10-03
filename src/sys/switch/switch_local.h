@@ -33,6 +33,23 @@ void		Switch_StartAsyncThread( void );
 void		Switch_StopAsyncThread( void );
 // Core for the next pthread_create only (default for all others: core 2). See switch_threads.cpp.
 void		Switch_SetNextThreadCore( int core );
+// Name of the thread the next pthread_create starts, for the CPU profiler.
+void		Switch_SetNextThreadName( const char *name );
+
+// CPU profiler (switch_profiler.cpp). Threads register themselves from the
+// pthread_create trampoline; start is their start routine.
+void		Switch_ProfilerRegisterThread( const char *name, void *start );
+void		Switch_ProfilerUnregisterThread( void );
+// The calling thread is also sampled while it waits (the engine thread).
+void		Switch_ProfilerTrackWaits( void );
+// Engine thread, once per main loop frame: follows com_cpuProfile.
+void		Switch_ProfilerFrame( void );
+// CPU time of each thread since the last call, as "engine 96%, Async 4%".
+void		Switch_ProfilerThreadUsage( char *text, int size );
+// GPU load in 0.1% units as the system measures it, or -1.
+int			Switch_GpuLoad( void );
+// Ends the sampler thread and closes the GPU device. Call before the process leaves.
+void		Switch_ShutdownProfiler( void );
 
 // Input (switch_input.cpp). Called from Sys_GenerateEvents on the engine thread.
 void		Switch_PollInput( void );
@@ -72,6 +89,8 @@ void		Switch_ShutdownGyro( void );
 
 // Milliseconds spent in eglSwapBuffers since the last call (switch_glimp.cpp).
 float		Switch_TakeSwapMsec( void );
+// True when the Mesa in use lets r_switchGLDriver choose the GL driver (the Mesa 26 port).
+bool		Switch_GLDriverChoice( void );
 // r_fpsLock: sleeps between main loop frames to hold the locked frame rate.
 void		Switch_PaceFrame( void );
 

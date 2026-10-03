@@ -101,6 +101,7 @@ void Sys_CreateThread( xthread_t function, void *parms, xthreadPriority priority
 	pthread_attr_init( &attr );
 	pthread_attr_setstacksize( &attr, WORKER_THREAD_STACK_SIZE );
 	pthread_t handle;
+	Switch_SetNextThreadName( name );
 	if ( pthread_create( &handle, &attr, ( pthread_function_t )function, parms ) != 0 ) {
 		common->Error( "ERROR: pthread_create %s failed\n", name );
 	}
@@ -261,11 +262,13 @@ Applications may use cores 0-2; core 3 belongs to the system.
 
 static const int	SWITCH_LIBRARY_THREAD_CORE = 2;
 static volatile int	s_nextThreadCore = -1;		// one-shot override, consumed by the next pthread_create
+static const char * volatile	s_nextThreadName = NULL;	// likewise; library threads have no name
 
 typedef struct {
 	void *	( *start )( void * );
 	void *	arg;
 	int		core;
+	char	name[32];
 } switchThreadTrampoline_t;
 
 extern "C" int __real_pthread_create( pthread_t *thread, const pthread_attr_t *attr, void *( *start )( void * ), void *arg );
@@ -276,7 +279,11 @@ static void *Switch_ThreadTrampoline( void *param ) {
 	if ( t.core >= 0 ) {
 		svcSetThreadCoreMask( threadGetCurHandle(), t.core, 1u << t.core );
 	}
-	return t.start( t.arg );
+	// the CPU profiler knows every thread, library ones included (switch_profiler.cpp)
+	Switch_ProfilerRegisterThread( t.name, (void *)t.start );
+	void *result = t.start( t.arg );
+	Switch_ProfilerUnregisterThread();
+	return result;
 }
 
 extern "C" int __wrap_pthread_create( pthread_t *thread, const pthread_attr_t *attr, void *( *start )( void * ), void *arg ) {
@@ -284,6 +291,7 @@ extern "C" int __wrap_pthread_create( pthread_t *thread, const pthread_attr_t *a
 	if ( core < 0 ) {
 		core = SWITCH_LIBRARY_THREAD_CORE;
 	}
+	const char *name = __atomic_exchange_n( &s_nextThreadName, (const char *)NULL, __ATOMIC_SEQ_CST );
 
 	switchThreadTrampoline_t *t = (switchThreadTrampoline_t *)malloc( sizeof( *t ) );
 	if ( !t ) {
@@ -292,6 +300,7 @@ extern "C" int __wrap_pthread_create( pthread_t *thread, const pthread_attr_t *a
 	t->start = start;
 	t->arg = arg;
 	t->core = core;
+	idStr::Copynz( t->name, name ? name : "", sizeof( t->name ) );
 	const int result = __real_pthread_create( thread, attr, Switch_ThreadTrampoline, t );
 	if ( result != 0 ) {
 		free( t );
@@ -301,4 +310,9 @@ extern "C" int __wrap_pthread_create( pthread_t *thread, const pthread_attr_t *a
 
 void Switch_SetNextThreadCore( int core ) {
 	__atomic_store_n( &s_nextThreadCore, core, __ATOMIC_SEQ_CST );
+}
+
+// name must stay valid until the thread has been created
+void Switch_SetNextThreadName( const char *name ) {
+	__atomic_store_n( &s_nextThreadName, name, __ATOMIC_SEQ_CST );
 }

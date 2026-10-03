@@ -29,6 +29,45 @@ section and the lesson goes to section 5.
 - **First release (v0.1.0):** the game is playable through these maps. The
   next updates focus on performance.
 
+### First update: where does a frame go? (profiles to collect)
+
+- **Why:** performance was the main complaint about v0.1.0. Before choosing
+  between tuning the GL renderer, a newer driver (Mesa 26.2.3, Zink on the NVK
+  Vulkan driver) and a Vulkan back end of our own, we need to know how a heavy
+  frame splits between our code, Mesa and the GPU. Until now we only knew
+  "back end 75-85%".
+- **What the build after v0.1.0 adds** (all off by default; switch-port.md,
+  "Profilers"):
+  - settings menu: **Performance log**, **GPU pass timing**, **CPU profiler**;
+  - `perf passes`, `perf gpu` and `perf sys` lines after every `perf` line;
+  - `basepr/logs/openprey_cpuprofile.txt`, written by the CPU profiler.
+- **Test** (same spots as always, standing still):
+  1. Settings (−): Frame rate lock **Off**, Dynamic resolution **Off**,
+     Performance log **On**, GPU pass timing **On**.
+  2. Go to the roadhouse bar, to the spot with the lowest frame rate.
+  3. Settings: CPU profiler **On**. Close the menu and stand still for about
+     70 seconds (the profiler writes a report every 20 s; the first one also
+     holds the seconds the menu was open).
+  4. Settings: CPU profiler **Off**.
+  5. Go to the bathroom (the spot where half the resolution doubled the frame
+     rate) and repeat steps 3 and 4.
+  6. Optional, in the bar: Shadows **On**, then steps 3 and 4 again; Shadows
+     **Off**.
+  7. Put Frame rate lock back to 30 fps and Dynamic resolution back On, and
+     quit from the game's menu.
+  8. Send `basepr/logs/openprey.log` and
+     `basepr/logs/openprey_cpuprofile.txt`.
+- **If the log says `cpu profile: this loader does not allow pausing
+  threads`**, the profiler cannot run under that loader; send the log anyway,
+  the `perf` lines are enough to start.
+- **Reading the result:** `python3 tools/switch/cpu_profile.py
+  openprey_cpuprofile.txt --elf <ELF of that build> --map <its map> --report N`
+  (the `cpu profile: report N written` lines in `openprey.log` say which
+  report belongs to which spot).
+- **Next, on the same spots:** the Mesa 26.2.3 build with **GL driver** NVC0
+  and then Zink (switch-port.md, "Vulkan and Mesa 26.2.3"). It needs the
+  unified Mesa SDK, which has NVK.
+
 **Solved and confirmed on hardware (2026-10-01):**
 
 - the driver crash in feedingtowera: vertex pages (lesson 17);
@@ -238,8 +277,10 @@ MSYSTEM=MSYS <devkitPro>/msys2/usr/bin/bash.exe -lc "cd <repo> && export MESON_R
 ### Releasing each build (always in this order)
 
 1. Build.
-2. **Archive the ELF:** copy it to `.tmp/elf-builds/OpenPrey-<commit>.elf`.
-   Crashes cannot be read without the ELF of the same build.
+2. **Archive the ELF and the linker map:** copy them to
+   `.tmp/elf-builds/OpenPrey-<commit>.elf` and `.map`. Crashes and CPU
+   profiles cannot be read without the ELF of the same build, and the map
+   says which library each function belongs to.
 3. Copy the NRO to `switch/openprey/` on the test SD card (or a staging copy
    of the card under `.tmp/`).
 4. Commit with a descriptive message and `git push origin switch-port`.
@@ -329,14 +370,16 @@ everything (it is in the precompiled header). Savegames do not depend on it
 | `switch_input.cpp` | Controls (game/menu/console/settings), versioned default binds (`in_switchControlScheme`), system keyboard, touch |
 | `switch_settings.cpp` | Settings menu overlay (the − button) and versioned settings defaults (`com_switchSettings`) |
 | `switch_gyro.cpp` | Gyro aiming (`in_gyro*`) |
-| `switch_threads.cpp` | Threads and locks; `__wrap_pthread_create` places each thread on a core |
+| `switch_threads.cpp` | Threads and locks; `__wrap_pthread_create` places each thread on a core and registers it with the profiler |
+| `switch_profiler.cpp` | CPU time of each thread, sampling CPU profiler (`com_cpuProfile`), GPU load |
+| `tools/switch/cpu_profile.py` | Names the CPU profile's addresses from the ELF and adds them up by function and library |
 | `switch_net.cpp` | Loopback-only networking (stub) |
 | `tools/switch/make_game_object.py` | "Fake DLL": links the game into one object (`ld -r`) exporting only `GetGameAPI`; with LTO it generates the game's code there |
 | `tools/switch/gen_gl11_loader.py` | Generates the GL 1.1 function pointers through `eglGetProcAddress` |
 | `tools/switch/gltest/` | GL capability probe for the hardware |
 | `tools/switch/mesa20/` | Rebuilds devkitPro's Mesa 20.1 from source |
 | `src/renderer/RenderSystem.cpp` | Render scale and dynamic resolution, performance timers |
-| `src/renderer/tr_backend.cpp` | Parameter cache, performance counters, `r_perfGpuSync` |
+| `src/renderer/tr_backend.cpp` | Parameter cache, performance counters, back end time by pass, GPU timestamps (`r_gpuProfile`), `r_perfGpuSync` |
 | `src/renderer/Image_load.cpp` | DXT texture compression (`image_compressTextures`) |
 | `src/framework/FileSystem.cpp` | Directory cache, load statistics, stopping the download thread |
 
@@ -520,8 +563,11 @@ The full reference is the Performance section of
 | Cvar | Default | Use |
 |---|---|---|
 | `com_showFPS 1` | 0 | fps and 3D resolution on screen |
-| `com_logPerf 1` | 0 | One performance line per second in the log |
+| `com_logPerf 1` | 0 | Performance lines once per second in the log: frame, back end by pass, GPU load, threads, clocks |
 | `com_logHitches` | 100 | Logs frames above N ms, with a breakdown |
+| `r_gpuProfile 1` | 0 | Adds the GPU time of each back end pass (`perf gpu` line) |
+| `com_cpuProfile 1` | 0 | Sampling CPU profiler: writes `logs/openprey_cpuprofile.txt` (read it with `tools/switch/cpu_profile.py`) |
+| `com_cpuProfileSeconds` | 20 | Seconds per CPU profile report |
 | `r_perfGpuSync 1` | 0 | Diagnostic: splits CPU and GPU time (lowers the frame rate) |
 | `r_fpsLock` | 30 | 30 = locked; 0 = unlocked (1 to 19 mean 30) |
 | `r_dynamicResolution` | 1 | Dynamic resolution; checks each drop and undoes it when it did not help |
@@ -530,6 +576,8 @@ The full reference is the Performance section of
 | `r_switchPerfProfile` | 3 | 0 = default; 1 = GPU 384 MHz; 2 = GPU 460.8; 3 = GPU 460.8 + RAM 1600. CPU: set 1224 or 1785 MHz in sys-clk / Horizon-OC |
 | `r_vertexPages` | 1 | Vertex cache blocks in shared 8 MB buffers, no driver allocation per block (read at startup) |
 | `r_switchGLThread` | 1 | Mesa 26 build only: GL driver on its own thread (core 2); applies after `vid_restart` |
+| `r_switchGLDriver` | 0 | Mesa 26 build only: 0 = NVC0, 1 = Zink on the NVK Vulkan driver; applies at the next start, falls back to NVC0 after a session that did not end normally |
+| `r_switchMesaEnv` | empty | Mesa 26 build only: driver environment variables, `NAME=value;NAME=value`; applies at the next start |
 | `r_useIndexBuffers` | 0 | Tested: no gain on the Switch |
 | `image_compressTextures` | 1 | DXT textures (2 also compresses normal maps) |
 | `r_cacheProgramParms` | 1 | Parameter cache (no measured effect) |
@@ -544,12 +592,16 @@ The full reference is the Performance section of
 **How to measure:**
 
 1. Ask the tester for `com_logPerf 1`, `r_fpsLock 0` and
-   `r_dynamicResolution 0`.
+   `r_dynamicResolution 0` (settings menu: Performance log, Frame rate lock,
+   Dynamic resolution).
 2. Always measure in the same places: standing in the bathroom, in the bar full
    of NPCs, and turning the camera in the hallway.
 3. Change one cvar at a time.
+4. For where the CPU time goes, add a CPU profile of the spot (settings menu:
+   CPU profiler; section 0 has the steps).
 
-Status Monitor screenshots complete the data.
+The `perf sys` line carries the GPU load and the clocks, so Status Monitor
+screenshots are only needed for the per-core CPU load.
 
 ### Mesa 20.1 built from source
 
@@ -625,6 +677,9 @@ The order that worked here:
     CRC (`mapfile.cpp`).
 - **Deathwalk:** level appending (section 0).
 - **Performance:**
+  - the profiles of section 0, then the choice between GL tuning, the Mesa
+    26.2.3 drivers and a Vulkan back end (switch-port.md, "Vulkan and Mesa
+    26.2.3");
   - PGO training run and optimized build;
   - the heavy front end in late feedingtowerb;
   - render back end on its own thread.

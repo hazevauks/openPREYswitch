@@ -676,6 +676,8 @@ CopyFramebuffer
 ====================
 */
 void idImage::CopyFramebuffer( int x, int y, int imageWidth, int imageHeight ) {
+	idPerfPassScope perfPass( PERFPASS_COPY );
+
 	glBindTexture( ( opts.textureType == TT_CUBIC ) ? GL_TEXTURE_CUBE_MAP_EXT : GL_TEXTURE_2D, texnum );
 
 	if ( cvarSystem->GetCVarBool( "g_lowresFullscreenFX" ) ) {

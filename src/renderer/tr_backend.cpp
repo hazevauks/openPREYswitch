@@ -199,8 +199,193 @@ void R_TakePerfCounters( rendererPerf_t &perf ) {
 	memset( &perfCounters, 0, sizeof( perfCounters ) );
 }
 
+/*
+====================
+Back end time by pass
+
+RB_SetPerfPass names the pass the back end is in. The time between two calls
+goes to the pass that was current, and so does every draw call, so the
+performance logs can say which part of the frame the CPU time and the draws
+belong to.
+
+r_gpuProfile adds the GPU side: a timestamp query (ARB_timer_query) at every
+pass change, read back GPU_PROFILE_FRAMES frames later so that reading never
+waits. The GPU takes a timestamp when it reaches that point of the command
+stream. Between two of them lie its work on the pass and any time it sat idle
+until the CPU submitted the next commands. In a scene the GPU limits, the
+difference is GPU work; in one the CPU limits, it follows the CPU time of the
+pass.
+
+The unit of a timestamp is not taken from the driver (NVK on the Tegra X1
+reports 1 ns for a tick of about 1.63 ns). It is measured: the first timestamp
+of a frame against the CPU clock when it was issued, over a growing interval.
+====================
+*/
+idCVar r_gpuProfile( "r_gpuProfile", "0", CVAR_RENDERER | CVAR_BOOL, "diagnostic: time the GPU takes for each back end pass, from timestamp queries, reported by com_logPerf" );
+
+static const int	GPU_PROFILE_FRAMES = 4;				// a frame's timestamps are read this many frames later
+static const int	GPU_PROFILE_MAX_MARKS = 1024;		// pass changes per frame
+static const int	GPU_PROFILE_IDLE = PERFPASS_COUNT;	// a mark that ends a pass without starting one
+static const double	GPU_PROFILE_CALIBRATE_SEC = 3.0;	// shortest interval the tick length is measured over
+
+typedef struct {
+	GLuint		queries[GPU_PROFILE_MAX_MARKS];
+	byte		passes[GPU_PROFILE_MAX_MARKS];			// the pass that starts at each mark
+	int			numMarks;
+	double		startSec;								// CPU clock when the first mark was issued
+} gpuProfileFrame_t;
+
+static rendererPassPerf_t	passPerf;
+static perfPass_t			perfPassCurrent = PERFPASS_OTHER;
+static double				perfPassStartSec = 0.0;
+static bool					perfPassRunning = false;	// inside RB_ExecuteBackEndCommands
+
+static gpuProfileFrame_t	gpuProfileFrames[GPU_PROFILE_FRAMES];
+static int					gpuProfileFrame = 0;
+static bool					gpuProfileActive = false;
+static double				gpuProfileBaseSec = 0.0;	// first frame read since r_gpuProfile was set
+static GLuint64				gpuProfileBaseTick = 0;
+static double				gpuProfileNsPerTick = 0.0;
+
+const char *R_PerfPassName( perfPass_t pass ) {
+	static const char * const names[PERFPASS_COUNT] = {
+		"other", "depth", "shadows", "interactions", "ambient", "fog", "post", "copy", "gui", "swap"
+	};
+	return names[pass];
+}
+
+void RB_ResetGpuProfile( void ) {
+	// the query names belonged to the old context
+	memset( gpuProfileFrames, 0, sizeof( gpuProfileFrames ) );
+	gpuProfileFrame = 0;
+	gpuProfileActive = false;
+}
+
+static void RB_GpuProfileMark( int pass ) {
+	if ( !gpuProfileActive ) {
+		return;
+	}
+	gpuProfileFrame_t &frame = gpuProfileFrames[gpuProfileFrame];
+	if ( frame.numMarks > 0 && frame.passes[frame.numMarks - 1] == pass ) {
+		return;
+	}
+	// the last slot is kept for the mark that closes the frame
+	const int limit = ( pass == GPU_PROFILE_IDLE ) ? GPU_PROFILE_MAX_MARKS : GPU_PROFILE_MAX_MARKS - 1;
+	if ( frame.numMarks >= limit ) {
+		return;
+	}
+	if ( frame.numMarks == 0 ) {
+		frame.startSec = R_PerfTime();
+	}
+	GLuint &query = frame.queries[frame.numMarks];
+	if ( query == 0 ) {
+		glGenQueries( 1, &query );
+	}
+	glQueryCounter( query, GL_TIMESTAMP );
+	frame.passes[frame.numMarks++] = (byte)pass;
+}
+
+static void RB_GpuProfileRead( const gpuProfileFrame_t &frame ) {
+	if ( frame.numMarks < 2 ) {
+		return;
+	}
+	// never wait for the GPU: a frame whose last timestamp is not ready is dropped
+	GLuint available = 0;
+	glGetQueryObjectuiv( frame.queries[frame.numMarks - 1], GL_QUERY_RESULT_AVAILABLE, &available );
+	if ( !available ) {
+		passPerf.gpuFramesDropped++;
+		return;
+	}
+
+	GLuint64 first = 0;
+	GLuint64 previous = 0;
+	double total = 0.0;
+	for ( int i = 0; i < frame.numMarks; i++ ) {
+		GLuint64 tick = 0;
+		glGetQueryObjectui64v( frame.queries[i], GL_QUERY_RESULT, &tick );
+		if ( i == 0 ) {
+			first = tick;
+		} else if ( tick > previous && frame.passes[i - 1] != GPU_PROFILE_IDLE ) {
+			const double ticks = (double)( tick - previous );
+			passPerf.gpuTicks[frame.passes[i - 1]] += ticks;
+			total += ticks;
+		}
+		previous = tick;
+	}
+	passPerf.gpuFrameTicks += total;
+	passPerf.gpuFrames++;
+
+	if ( gpuProfileBaseTick == 0 ) {
+		gpuProfileBaseSec = frame.startSec;
+		gpuProfileBaseTick = first;
+	} else if ( frame.startSec - gpuProfileBaseSec >= GPU_PROFILE_CALIBRATE_SEC && first > gpuProfileBaseTick ) {
+		gpuProfileNsPerTick = ( frame.startSec - gpuProfileBaseSec ) * 1.0e9 / (double)( first - gpuProfileBaseTick );
+	}
+}
+
+// RB_SwapBuffers, before the swap
+static void RB_GpuProfileEndFrame( void ) {
+	if ( gpuProfileActive ) {
+		RB_GpuProfileMark( GPU_PROFILE_IDLE );
+		// the next slot holds the oldest frame: read it before it is reused
+		gpuProfileFrame = ( gpuProfileFrame + 1 ) % GPU_PROFILE_FRAMES;
+		RB_GpuProfileRead( gpuProfileFrames[gpuProfileFrame] );
+		gpuProfileFrames[gpuProfileFrame].numMarks = 0;
+	}
+
+	bool wanted = r_gpuProfile.GetBool();
+	if ( wanted && ( glGenQueries == NULL || glQueryCounter == NULL || glGetQueryObjectuiv == NULL || glGetQueryObjectui64v == NULL ) ) {
+		common->Printf( "r_gpuProfile: the GL driver has no timestamp queries (ARB_timer_query)\n" );
+		r_gpuProfile.SetBool( false );
+		wanted = false;
+	}
+	if ( wanted != gpuProfileActive ) {
+		gpuProfileActive = wanted;
+		for ( int i = 0; i < GPU_PROFILE_FRAMES; i++ ) {
+			gpuProfileFrames[i].numMarks = 0;
+		}
+		gpuProfileBaseSec = 0.0;
+		gpuProfileBaseTick = 0;
+		gpuProfileNsPerTick = 0.0;
+	}
+}
+
+perfPass_t RB_SetPerfPass( perfPass_t pass ) {
+	const perfPass_t previous = perfPassCurrent;
+	if ( pass == previous || !perfPassRunning ) {
+		return previous;
+	}
+	const double now = R_PerfTime();
+	passPerf.cpuSec[previous] += now - perfPassStartSec;
+	perfPassStartSec = now;
+	perfPassCurrent = pass;
+	// the swap waits on the CPU side; what the GPU does meanwhile belongs to no pass
+	RB_GpuProfileMark( pass == PERFPASS_SWAP ? GPU_PROFILE_IDLE : pass );
+	return previous;
+}
+
+static void RB_BeginPerfPasses( double now ) {
+	perfPassRunning = true;
+	perfPassCurrent = PERFPASS_OTHER;
+	perfPassStartSec = now;
+	RB_GpuProfileMark( PERFPASS_OTHER );
+}
+
+static void RB_EndPerfPasses( double now ) {
+	passPerf.cpuSec[perfPassCurrent] += now - perfPassStartSec;
+	perfPassRunning = false;
+	RB_GpuProfileMark( GPU_PROFILE_IDLE );
+}
+
+void R_TakePassPerf( rendererPassPerf_t &perf ) {
+	perf = passPerf;
+	perf.gpuNsPerTick = gpuProfileNsPerTick;
+	memset( &passPerf, 0, sizeof( passPerf ) );
+}
+
 void RB_CountPerfDraw( void ) {
 	perfCounters.draws++;
+	passPerf.draws[perfPassCurrent]++;
 }
 
 // idVertexCache::EndFrame
@@ -625,6 +810,9 @@ const void	RB_SwapBuffers( const void *data ) {
 		RB_ApplyCRTToBackBuffer();
 	}
 
+	RB_GpuProfileEndFrame();
+	idPerfPassScope perfPass( PERFPASS_SWAP );
+
 	if ( r_perfGpuSync.GetBool() ) {
 		const double syncStart = R_PerfTime();
 		glFinish();
@@ -771,6 +959,7 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 
 	backEndStartTime = Sys_Milliseconds();
 	const double perfStart = R_PerfTime();
+	RB_BeginPerfPasses( perfStart );
 
 	// needed for editor rendering
 	RB_SetDefaultGLState();
@@ -829,7 +1018,9 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 	// stop rendering on this thread
 	backEndFinishTime = Sys_Milliseconds();
 	backEnd.pc.msec = backEndFinishTime - backEndStartTime;
-	R_AddPerfTime( true, R_PerfTime() - perfStart );
+	const double perfEnd = R_PerfTime();
+	RB_EndPerfPasses( perfEnd );
+	R_AddPerfTime( true, perfEnd - perfStart );
 
 	if ( r_debugRenderToTexture.GetInteger() == 1 ) {
 		common->Printf( "3d: %i, 2d: %i, SetBuf: %i, SwpBuf: %i, CpyRenders: %i, CpyFrameBuf: %i\n", c_draw3d, c_draw2d, c_setBuffers, c_swapBuffers, c_copyRenders, backEnd.c_copyFrameBuffer );

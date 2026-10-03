@@ -775,6 +775,7 @@ void R_InitOpenGL( void ) {
 		if ( GLimp_Init( parms ) ) {
 			// it worked; a new context starts with default program env parameters
 			RB_InvalidateProgramEnvCache();
+			RB_ResetGpuProfile();
 			break;
 		}
 

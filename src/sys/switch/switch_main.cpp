@@ -12,6 +12,7 @@ signals, mmap, dlopen and terminals do not exist on Horizon.
 
 #include "../../idlib/precompiled.h"
 #include "../sys_local.h"
+#include "../../renderer/tr_local.h"	// back end time by pass, for the performance logs
 
 // struct in_addr for __nxlink_host (switch.h -> nxlink.h). idlib defines an empty
 // _LITTLE_ENDIAN marker, while newlib's <machine/endian.h> compares it numerically.
@@ -105,6 +106,7 @@ blocked in pthread_join. The system then crashed when the process closed
 void FS_StopBackgroundDownloadThread( void );
 
 static void Switch_Exit( int ret ) {
+	Switch_ShutdownProfiler();
 	FS_StopBackgroundDownloadThread();
 	Switch_StopAsyncThread();
 	s_exitCode = ret;
@@ -492,6 +494,35 @@ void Switch_RestorePerformanceProfile( void ) {
 }
 
 /*
+================
+Switch_ReadClocks
+
+CPU, GPU and memory clock rates in MHz as they are now, whatever set them (the
+profile above, sys-clk, Horizon-OC). False when the system does not give them.
+================
+*/
+static bool Switch_ReadClocks( int mhz[3] ) {
+	static const PcvModuleId modules[3] = { PcvModuleId_CpuBus, PcvModuleId_GPU, PcvModuleId_EMC };
+	if ( !hosversionAtLeast( 8, 0, 0 ) || R_FAILED( clkrstInitialize() ) ) {
+		return false;
+	}
+	bool ok = true;
+	for ( int i = 0; i < 3 && ok; i++ ) {
+		ClkrstSession session;
+		u32 hz = 0;
+		if ( R_FAILED( clkrstOpenSession( &session, modules[i], 3 ) ) ) {
+			ok = false;
+			break;
+		}
+		ok = R_SUCCEEDED( clkrstGetClockRate( &session, &hz ) );
+		clkrstCloseSession( &session );
+		mhz[i] = (int)( ( hz + 500000 ) / 1000000 );
+	}
+	clkrstExit();
+	return ok;
+}
+
+/*
 ============================================================================
 FILES AND PATHS
 ============================================================================
@@ -766,14 +797,39 @@ Switch_ReportHitch
 Logs frames slower than com_logHitches ms with the file system work done in
 them, to tell stutters caused by SD card reads during play from GPU/CPU spikes
 (e.g. shader compiles). The file system counters run while fs_profileLoads is on.
-A second line splits the render front end into its R_RenderView phases.
+A second line splits the render front end into its R_RenderView phases, a
+third the back end into its passes.
 ================
 */
 static idCVar com_logHitches( "com_logHitches", "100", CVAR_SYSTEM | CVAR_INTEGER, "log frames slower than this many ms, with the file system work done in them (0 = off)", 0, 10000 );
 
 void FS_GetProfileTotals( int &opens, double &openSec, long long &readBytes, double &readSec );
 
-static void Switch_ReportHitch( int frameMsec, int gameMsec, float swapMsec, const rendererPerf_t &perf,
+/*
+================
+Switch_PassCpuText
+
+The back end passes that did something, as "depth 2.1 (412) | gui 0.9 (85)":
+CPU ms and draws per frame.
+================
+*/
+static const char *Switch_PassCpuText( const rendererPassPerf_t &pass, float frames ) {
+	static char text[512];
+	text[0] = '\0';
+	for ( int i = 0; i < PERFPASS_COUNT; i++ ) {
+		const double msec = pass.cpuSec[i] * 1000.0 / frames;
+		if ( msec < 0.05 && pass.draws[i] == 0 ) {
+			continue;
+		}
+		idStr::Append( text, sizeof( text ), va( "%s%s %.1f", text[0] ? " | " : "", R_PerfPassName( (perfPass_t)i ), msec ) );
+		if ( pass.draws[i] ) {
+			idStr::Append( text, sizeof( text ), va( " (%d)", (int)( pass.draws[i] / frames ) ) );
+		}
+	}
+	return text;
+}
+
+static void Switch_ReportHitch( int frameMsec, int gameMsec, float swapMsec, const rendererPerf_t &perf, const rendererPassPerf_t &pass,
 		int opens0, double openSec0, long long bytes0, double readSec0 ) {
 	const int threshold = com_logHitches.GetInteger();
 	// map loads run inside one frame and report their own timings
@@ -802,6 +858,7 @@ static void Switch_ReportHitch( int frameMsec, int gameMsec, float swapMsec, con
 		perf.findSec * 1000.0, perf.lightSurfSec * 1000.0, perf.modelSurfSec * 1000.0, perf.sortSec * 1000.0,
 		perf.views, perf.viewEntities, perf.viewLights,
 		perf.md5Generated, perf.entityCallbacks, perf.interactionsCreated );
+	common->Printf( "hitch back end (cpu ms, draws): %s\n", Switch_PassCpuText( pass, 1.0f ) );
 }
 
 /*
@@ -817,15 +874,24 @@ glBufferData calls, a driver allocation each), "temp" is the per-frame vertex
 data, "overflow" the frames whose temp data did not fit, and "heap" the memory
 allocated from the heap (GPU buffers and textures included). With
 r_perfGpuSync 1 "gpu wait" is the GPU work left after the CPU finished the
-frame. Comparing these with the Status Monitor CPU/GPU load
-shows whether a frame is CPU bound, GPU bound, or serialized.
+frame.
+
+Three more lines follow:
+- "perf passes": the back end's CPU time and draws by pass. The swap is one
+  of them, so they add up to "back".
+- "perf gpu" (r_gpuProfile 1): the time the GPU took for each pass, from
+  timestamp queries (tr_backend.cpp), and how many frames were read.
+- "perf sys": the GPU load as the system measures it (the Status Monitor
+  figure), the CPU time of each thread in percent of a core, and the CPU, GPU
+  and memory clocks.
+Together they show whether a frame is CPU bound, GPU bound, or serialized.
 ================
 */
-static idCVar com_logPerf( "com_logPerf", "0", CVAR_SYSTEM | CVAR_BOOL, "log a performance summary once per second (frame, game, render front/back end, swap wait, vertex buffers)" );
+static idCVar com_logPerf( "com_logPerf", "0", CVAR_SYSTEM | CVAR_BOOL, "log a performance summary once per second (frame, game, render front end and back end by pass, swap wait, vertex buffers, GPU load, CPU time of each thread, clocks)" );
 
 extern int time_gameFrame;
 
-static void Switch_UpdatePerfLog( int frameMsec, int gameMsec, float swapMsec, const rendererPerf_t &perf ) {
+static void Switch_UpdatePerfLog( int frameMsec, int gameMsec, float swapMsec, const rendererPerf_t &perf, const rendererPassPerf_t &pass ) {
 	static int				windowStart = 0;
 	static int				frames = 0;
 	static int				totalMsec = 0;
@@ -833,6 +899,10 @@ static void Switch_UpdatePerfLog( int frameMsec, int gameMsec, float swapMsec, c
 	static int				gameTotal = 0;
 	static float			swapTotal = 0.0f;
 	static rendererPerf_t	sum;
+	static rendererPassPerf_t	passSum;
+	static int				gpuLoadTotal = 0;
+	static int				gpuLoadSamples = 0;
+	char					threads[256];
 
 	if ( !com_logPerf.GetBool() || frameMsec > 5000 ) {
 		windowStart = 0;
@@ -845,6 +915,9 @@ static void Switch_UpdatePerfLog( int frameMsec, int gameMsec, float swapMsec, c
 		frames = totalMsec = worstMsec = gameTotal = 0;
 		swapTotal = 0.0f;
 		memset( &sum, 0, sizeof( sum ) );
+		memset( &passSum, 0, sizeof( passSum ) );
+		gpuLoadTotal = gpuLoadSamples = 0;
+		Switch_ProfilerThreadUsage( threads, sizeof( threads ) );	// starts its window
 	}
 	frames++;
 	totalMsec += frameMsec;
@@ -861,6 +934,20 @@ static void Switch_UpdatePerfLog( int frameMsec, int gameMsec, float swapMsec, c
 	sum.bufferAllocBytes += perf.bufferAllocBytes;
 	sum.tempBytes += perf.tempBytes;
 	sum.tempOverflows += perf.tempOverflows;
+	for ( int i = 0; i < PERFPASS_COUNT; i++ ) {
+		passSum.cpuSec[i] += pass.cpuSec[i];
+		passSum.draws[i] += pass.draws[i];
+		passSum.gpuTicks[i] += pass.gpuTicks[i];
+	}
+	passSum.gpuFrameTicks += pass.gpuFrameTicks;
+	passSum.gpuFrames += pass.gpuFrames;
+	passSum.gpuFramesDropped += pass.gpuFramesDropped;
+	passSum.gpuNsPerTick = pass.gpuNsPerTick;
+	const int gpuLoad = Switch_GpuLoad();
+	if ( gpuLoad >= 0 ) {
+		gpuLoadTotal += gpuLoad;
+		gpuLoadSamples++;
+	}
 
 	if ( now - windowStart >= 1000 && frames > 0 ) {
 		const float n = (float)frames;
@@ -874,6 +961,37 @@ static void Switch_UpdatePerfLog( int frameMsec, int gameMsec, float swapMsec, c
 			(int)( sum.draws / n ), (int)( sum.parmsSkipped / n ),
 			(int)( sum.bufferAllocs / n ), (int)( sum.bufferAllocBytes / n / 1024.0f ), (int)( sum.bufferPaged / n ), (int)( sum.tempBytes / n / 1024.0f ), sum.tempOverflows, (int)( mallinfo().uordblks / ( 1024 * 1024 ) ),
 			cvarSystem->GetCVarInteger( "r_renderScaleCurrent" ) );
+		common->Printf( "perf passes (cpu ms, draws): %s\n", Switch_PassCpuText( passSum, n ) );
+
+		if ( passSum.gpuFrames > 0 && passSum.gpuNsPerTick > 0.0 ) {
+			// ticks to ms per frame
+			const double scale = passSum.gpuNsPerTick / 1.0e6 / passSum.gpuFrames;
+			idStr passes;
+			for ( int i = 0; i < PERFPASS_COUNT; i++ ) {
+				if ( passSum.gpuTicks[i] * scale >= 0.05 ) {
+					passes += va( " | %s %.1f", R_PerfPassName( (perfPass_t)i ), passSum.gpuTicks[i] * scale );
+				}
+			}
+			common->Printf( "perf gpu: %.1f ms per frame%s | tick %.3f ns, %d frames read, %d dropped\n",
+				passSum.gpuFrameTicks * scale, passes.c_str(), passSum.gpuNsPerTick, passSum.gpuFrames, passSum.gpuFramesDropped );
+		} else if ( passSum.gpuFrames > 0 || passSum.gpuFramesDropped > 0 ) {
+			common->Printf( "perf gpu: measuring the timestamp unit (%d frames read, %d dropped)\n", passSum.gpuFrames, passSum.gpuFramesDropped );
+		}
+
+		idStr sys;
+		if ( gpuLoadSamples > 0 ) {
+			sys = va( "gpu load %d%% | ", gpuLoadTotal / gpuLoadSamples / 10 );
+		}
+		Switch_ProfilerThreadUsage( threads, sizeof( threads ) );
+		sys += va( "threads %s", threads );
+		int clocks[3];
+		if ( Switch_ReadClocks( clocks ) ) {
+			sys += va( " | clocks cpu %d gpu %d mem %d MHz", clocks[0], clocks[1], clocks[2] );
+		}
+		common->Printf( "perf sys: %s\n", sys.c_str() );
+
+		memset( &passSum, 0, sizeof( passSum ) );
+		gpuLoadTotal = gpuLoadSamples = 0;
 		windowStart = now;
 		frames = totalMsec = worstMsec = gameTotal = 0;
 		swapTotal = 0.0f;
@@ -889,6 +1007,9 @@ static void *Switch_EngineThread( void * ) {
 	for ( int i = 1; i < s_argc; i++ ) {
 		args.Append( s_argv[i] );
 	}
+
+	// com_cpuProfile also reports where this thread waits
+	Switch_ProfilerTrackWaits();
 
 	Sys_SetLoadingBoost( true );
 	common->Init( args.Num(), args.Ptr(), NULL );
@@ -917,8 +1038,11 @@ static void *Switch_EngineThread( void * ) {
 		const float swapMsec = Switch_TakeSwapMsec();
 		rendererPerf_t perf;
 		R_TakePerfCounters( perf );
-		Switch_ReportHitch( frameMsec, gameMsec, swapMsec, perf, opens0, openSec0, bytes0, readSec0 );
-		Switch_UpdatePerfLog( frameMsec, gameMsec, swapMsec, perf );
+		rendererPassPerf_t passPerf;
+		R_TakePassPerf( passPerf );
+		Switch_ReportHitch( frameMsec, gameMsec, swapMsec, perf, passPerf, opens0, openSec0, bytes0, readSec0 );
+		Switch_UpdatePerfLog( frameMsec, gameMsec, swapMsec, perf, passPerf );
+		Switch_ProfilerFrame();
 
 		// r_fpsLock: wait here, between frames, never inside one (see switch_glimp.cpp)
 		Switch_PaceFrame();
@@ -990,6 +1114,7 @@ int main( int argc, char **argv ) {
 	pthread_attr_setstacksize( &attr, ENGINE_THREAD_STACK_SIZE );
 	// the engine (game + render) owns core 0; every other thread defaults to core 2
 	Switch_SetNextThreadCore( 0 );
+	Switch_SetNextThreadName( "engine" );
 	pthread_t engineThread;
 	if ( pthread_create( &engineThread, &attr, Switch_EngineThread, NULL ) != 0 ) {
 		Switch_WriteFatalFile( "could not create the engine thread" );

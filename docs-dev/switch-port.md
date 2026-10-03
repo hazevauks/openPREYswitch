@@ -212,6 +212,10 @@ Every change applies at once and is saved with the config (archived cvars).
 | Invert look | `in_joystickInvertLook` | Off / On (right stick, vertical) |
 | Subtitles | `g_subtitles` | Off / On |
 | Noclip | `g_noclip` | Off / On (single player; not archived) |
+| Performance log | `com_logPerf` | Off / On (not archived; see "Profilers") |
+| GPU pass timing | `r_gpuProfile` | Off / On (not archived) |
+| CPU profiler | `com_cpuProfile` | Off / On (not archived) |
+| GL driver | `r_switchGLDriver` | NVC0 / Zink (Vulkan); Mesa 26 builds only, applies at the next start |
 
 `g_noclip` lives in the game module (`hhPlayer::Think`): it follows the player's
 `noclip` flag, so the item stays right after the `noclip` command, a new map or a
@@ -254,6 +258,8 @@ given; the reasoning behind each setting is in the source comment next to it.
 | `r_vertexPages` | 1 | Vertex cache blocks are carved out of shared 8 MB buffers, so the driver does not allocate per block (see "Vertex buffer churn, vertex pages and shadows"). Read at startup. |
 | `r_shadows` | 0 | Stencil shadows, off by default on the Switch (see "Vertex buffer churn, vertex pages and shadows"). Applied once to older configs through `com_switchSettings`. |
 | `r_switchGLThread` | 1 | Mesa 26 build only: runs the GL driver on its own thread (core 2). Applies on `vid_restart`. |
+| `r_switchGLDriver` | 0 | Mesa 26 build only: 0 = NVC0, 1 = Zink on the NVK Vulkan driver. Applies at the next start (see "Vulkan and Mesa 26.2.3"). |
+| `r_switchMesaEnv` | empty | Mesa 26 build only: environment variables for the driver, `NAME=value;NAME=value`. Applies at the next start. |
 | `r_fpsLock` | 30 | Holds frames 33.3 ms apart (0 = off). |
 | `r_dynamicResolution` | 1 | 3D resolution follows the frame time (`r_dynamicResolutionFPS` 30, `r_dynamicResolutionMin` 50, `r_renderScale` max). |
 | `image_compressTextures` | 1 | DXT5 diffuse/default, DXT1 specular (2 also normal maps). |
@@ -311,8 +317,11 @@ so it judges the time a frame worked, and aims 10% under the frame budget.
 - game, render front end and back end, and swap wait;
 - draws, parameters skipped and vertex buffers created.
 
+Three more lines follow it (see "Profilers"): the back end by pass, the GPU by
+pass, and the system (GPU load, CPU time of each thread, clocks).
+
 `com_logHitches` (default 100 ms) breaks each slow frame into the same parts,
-plus its file reads.
+plus its file reads, the front end phases and the back end passes.
 
 `r_perfGpuSync 1` is a diagnostic that waits for the GPU before each swap. It
 reports the wait, which splits the back end into CPU and GPU time.
@@ -369,6 +378,108 @@ Sources:
   [GameBrew notes](https://www.gamebrew.org/wiki/Dhewm3_Switch): 20-30 fps with
   shadows off, less with shadows on
 - [Doom 3 (2019 version)](https://doomwiki.org/wiki/Doom_3_(2019_version))
+
+### Profilers
+
+Added for the first update (2026-10-03), to find out where a frame goes before
+choosing what to rewrite. All are off by default and can be turned on from the
+settings menu (Performance log, GPU pass timing, CPU profiler) or the console.
+None of them is saved with the config.
+
+**Back end by pass** (`com_logPerf 1`, line `perf passes`). `RB_SetPerfPass`
+(`tr_backend.cpp`) names the pass the back end is in: depth, shadows,
+interactions, ambient (shader passes that do not depend on lights), fog, post,
+copy (framebuffer copies), gui (2D views), swap and other. The line gives the
+time the back end thread spent in each pass (GL calls, the driver's work, and
+any wait inside the driver) and its draws per frame:
+
+```
+perf passes (cpu ms, draws): other 0.8 | depth 2.1 (412) | interactions 11.2 (890) | ambient 5.0 (520) | gui 0.9 (85) | swap 12.0
+```
+
+The passes add up to `back` of the line above. Slow frames get the same
+breakdown (`hitch back end`).
+
+**GPU by pass** (`r_gpuProfile 1`, line `perf gpu`). A timestamp query
+(ARB_timer_query) is issued at every pass change and read four frames later,
+so reading never waits for the GPU:
+
+```
+perf gpu: 26.3 ms per frame | depth 3.0 | interactions 13.1 | ambient 6.0 | gui 2.1 | tick 1.628 ns, 30 frames read, 0 dropped
+```
+
+- A timestamp is taken when the GPU reaches that point of the command stream.
+  The time between two of them is the GPU's work on the pass plus any time it
+  waited for the CPU to submit the next commands. Mesa submits a frame in
+  pieces, so in a scene the CPU limits, a pass's GPU time follows its CPU
+  time. Compare the line with `perf passes` and with `gpu load`: a pass the
+  GPU takes much longer over than the CPU did is GPU work.
+- `tick` is the measured length of a timestamp unit. The driver's unit is not
+  trusted (NVK on this GPU reports 1 ns for a tick of about 1.63 ns), so the
+  first timestamp of each frame is compared with the CPU clock over a growing
+  interval. The first three seconds print `measuring the timestamp unit`.
+- A frame whose timestamps are not ready after four frames is dropped
+  (`dropped`), never waited for.
+
+**System** (`com_logPerf 1`, line `perf sys`):
+
+```
+perf sys: gpu load 93% | threads engine 97%, Async 4%, +0x8a1c20 11% | clocks cpu 1224 gpu 460 mem 1600 MHz
+```
+
+- `gpu load` is the GPU's busy share as the system's GPU driver measures it
+  (`NVGPU_GPU_IOCTL_PMU_GET_GPU_LOAD`), the figure Status Monitor shows,
+  sampled every frame.
+- `threads` is the CPU time of each thread in percent of one core. A library
+  thread has no name and shows the code offset of its start routine, which
+  `cpu_profile.py` names.
+- `clocks` are read back from the system, so they include what an
+  overclocking tool set.
+
+**CPU profiler** (`com_cpuProfile 1`, `src/sys/switch/switch_profiler.cpp`). A
+sampler thread pauses every thread each 2 ms (`svcSetThreadActivity`), reads
+its program counter, link register and the return addresses up its frame
+records (`svcGetThreadContext3`), and resumes it. Every thread is known to it,
+library ones included, because all of them start through the `pthread_create`
+wrapper. Every `com_cpuProfileSeconds` (20) and when it is turned off, it
+appends a report to `basepr/logs/openprey_cpuprofile.txt`, and `openprey.log`
+gets a `cpu profile: report N written` line, which places the report among the
+`perf` lines.
+
+- The engine thread is sampled while it waits too. A sample is one of:
+  running its own code, in a system call (having used CPU time since the last
+  sample), or waiting (no CPU time since the last sample). The waits are
+  where the engine thread blocks in the system: GPU command submission and
+  buffer calls (IPC to the system's GPU service), waits for the GPU, the
+  swap, file reads.
+- Addresses are offsets into the executable. The ELF has the symbols of the
+  engine, the game and the statically linked Mesa, so one profile covers all
+  three.
+- Cost: about 3 MB of tables while it runs, and each thread is stopped for a
+  few microseconds 500 times a second.
+- The loader has to allow the two system calls (`envIsSyscallHinted`);
+  otherwise the log says the profiler is not available.
+
+`tools/switch/cpu_profile.py` reads the file:
+
+```sh
+python3 tools/switch/cpu_profile.py openprey_cpuprofile.txt \
+    --elf .tmp/elf-builds/OpenPrey-<commit>.elf --map .tmp/elf-builds/OpenPrey-<commit>.map
+```
+
+It prints, per thread: the split by library (engine, game, Mesa GL front end,
+state tracker, nouveau driver, libnx...; needs `--map`), the functions with
+the most time of their own, the functions with the most time including what
+they call, a call tree, and for the engine thread where it waited and which
+system calls used CPU time. `--list` shows the reports in the file and
+`--report N` reads one. The ELF and the map must be the ones of the NRO that
+wrote the profile, so both are archived with every build.
+
+The method is the one of the CPU profiler in the
+[UnleashedRecomp](https://github.com/ChanseyIsTheBest/UnleashedRecomp-NX) and
+[MarathonRecomp](https://github.com/ChanseyIsTheBest/MarathonRecomp-NX) Switch
+ports. Their GPU profiler times render passes with Vulkan timestamps; the GL
+timestamps above are the same idea.
 
 ### Vertex buffer churn, vertex pages and shadows
 
@@ -585,6 +696,95 @@ The handbook (section 0) lists the cvars to bisect them. The port's source is at
 [StevensND/mesa-switch](https://github.com/StevensND/mesa-switch), with forks by
 danfromtico and NaGaa95.
 
+### Vulkan and Mesa 26.2.3 (evaluation of 2026-10-03)
+
+The first update is about performance, so the Vulkan driver of that Mesa port
+was evaluated as a way forward. What exists, read from the sources and the
+documents of the projects that use it; nothing in this section has been
+measured with OpenPrey yet.
+
+**What mesa-switch offers now** (main at `d4a00ea`, 2026-09-28, Mesa 26.2.3):
+
+- NVK, Mesa's Vulkan driver for NVIDIA GPUs, built without a loader
+  (`libvulkan.a`), on the same Horizon GPU backend as its GL driver.
+- OpenGL two ways, chosen with `MESA_SWITCH_GL_DRIVER` before `eglInitialize`:
+  NVC0, the nouveau GL driver we tested, or Zink, which runs OpenGL on top of
+  NVK.
+- Since our test (snapshot `0d9d4f0`, 26.2.2): the 26.2.3 point release, NVK
+  and shader compiler (NAK) fixes, a shader cache shared between instances,
+  and ZCULL (hierarchical depth culling) in NVK. Nothing there is aimed at the
+  NVC0 glitches we saw.
+- NVK and Zink need the unified build (`build-unified.sh`), which needs a Rust
+  toolchain because NAK is written in Rust. `build-opengl.sh`, what we built
+  before, gives NVC0 only. The repository's CI publishes the unified SDK as a
+  build artifact (`mesa-26.2.3-switch-unified-horizon-sdk`, ~50 MB).
+
+**Three ways to use it, from cheapest to dearest:**
+
+1. **NVC0 from 26.2.3.** No engine work. The 26.2.2 test: as fast as Mesa
+   20.1, with rendering glitches.
+2. **Zink on NVK.** No renderer work either: `r_switchGLDriver 1`
+   (`switch_glimp.cpp`). The engine keeps issuing GL; Zink turns it into
+   Vulkan. It brings NVK's shader compiler and ZCULL to our frame, and adds
+   Zink's own CPU work per draw. Whether our GL 4.3 compatibility context with
+   ARB assembly programs starts on it, and how fast it is, only the console
+   can say. It is the cheap way to see what the Vulkan driver does for this
+   game's GPU time.
+3. **A Vulkan back end of our own.** The renderer's back end rewritten for
+   Vulkan, so that our code decides what a draw costs on the CPU and a frame
+   is submitted once. What it takes:
+   - Prey's materials use ARB assembly vertex and fragment programs that come
+     from the player's `.pk4` files, so they have to be translated to SPIR-V on
+     the console;
+   - the fixed-function paths (texgen, texture matrices, alpha test, texenv
+     combine, clip planes) become generated shaders;
+   - pipelines for every combination of GL state the back end sets, stencil
+     shadows included;
+   - the vertex cache, the images, the framebuffer copies (`_currentRender`,
+     subviews, render scale) and the GUI on Vulkan objects.
+
+   That is months of work, with rendering correctness to win back on every
+   material. It can be developed on a PC against any Vulkan driver.
+   A deko3d back end (the other native API) is a rewrite of the same size.
+
+**What the ports that already use NVK report** (UnleashedRecomp-NX and
+MarathonRecomp-NX, which render through Vulkan and document their Switch
+work):
+
+- Their gains came from ten rounds of renderer, shader and driver changes on
+  top of Vulkan: from 29.5 ms of GPU frame (34 fps) to 44 fps at their 1080p
+  test spot.
+- ZCULL gave little there: turning it off changed no pass at their test spot,
+  and its better direction mode gained 0.17 ms.
+- Long sessions lost the GPU (`VK_ERROR_DEVICE_LOST`) with four of their
+  renderer changes on; they suspect the ZCULL load path and ship with those
+  changes off.
+
+**How the decision gets made.** The profilers above measure what each way
+could win:
+
+- the CPU profile splits the engine thread's time between our code and Mesa
+  (GL front end, state tracker, driver, system calls). Mesa's share is the
+  most a Vulkan back end of our own could save on the CPU, and a large share
+  in the GL front end or the state tracker would also point at cheaper fixes
+  inside GL (fewer state changes per draw, fewer draws);
+- `perf gpu` and `gpu load` say how much of a frame is GPU work, which is
+  what NVK's shader compiler and ZCULL could shorten;
+- a Zink run at the same spots shows the GPU side of that directly.
+
+Runtime switches for the Mesa 26 build, read when the display is created:
+
+- `r_switchGLDriver` 0 = NVC0, 1 = Zink. The settings menu shows it (GL
+  driver) when the Mesa in use is 26 or later. While Zink runs, a marker file
+  exists (`basepr/gl_driver_trial.txt`); a normal GL shutdown removes it. If
+  it is still there at the next start, the last Zink session crashed, hung or
+  was closed from HOME, and the game goes back to NVC0, so a driver that
+  cannot start does not lock the player out.
+- `r_switchMesaEnv "NAME=value;NAME=value"` sets environment variables for the
+  driver, to compare its options without a rebuild (for example
+  `NOUVEAU_SWITCH_STATS=1;NOUVEAU_SWITCH_FAST_DRAW=0`).
+- `r_switchGLThread` as before.
+
 ## Memory
 
 The libnx heap is ~3.1 GB (title override or forwarder). Every `malloc`, and
@@ -739,6 +939,12 @@ still not loaded: `shouldappendlevel` is never set and `AppendMap` is a stub.
 
 The first release is playable; the next updates focus on performance.
 
+0. **Measure first** (in progress): profiles of the bar and of a fill-bound
+   spot with the CPU profiler and the pass timings ("Profilers"), then the
+   same spots on Mesa 26.2.3 with NVC0 and with Zink on NVK ("Vulkan and Mesa
+   26.2.3"). The split between our code, Mesa and the GPU decides which of
+   the items below comes first, and whether a Vulkan back end is worth its
+   cost.
 1. **PGO:** a training run with `OpenPrey-pgo.nro`, then the optimized build
    (see "LTO and PGO"). Compare it with the LTO build at the same spots.
 2. **Front end in heavy scenes:** late feedingtowerb ran at 6-7 fps with a

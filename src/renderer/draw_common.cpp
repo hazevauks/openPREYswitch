@@ -1135,6 +1135,8 @@ void RB_STD_DrawGlowView( void ) {
 		return;
 	}
 
+	idPerfPassScope perfPass( PERFPASS_POST );
+
 	RB_LogComment( "---------- RB_STD_DrawGlowView ----------\n" );
 	backEnd.depthFunc = GLS_DEPTHFUNC_EQUAL;
 
@@ -2472,6 +2474,8 @@ void RB_StencilShadowPass( const drawSurf_t *drawSurfs ) {
 		return;
 	}
 
+	idPerfPassScope perfPass( PERFPASS_SHADOWS );
+
 	RB_LogComment( "---------- RB_StencilShadowPass ----------\n" );
 
 	globalImages->BindNull();
@@ -2964,6 +2968,10 @@ void	RB_STD_DrawView( void ) {
 	drawSurfs = (drawSurf_t **)&backEnd.viewDef->drawSurfs[0];
 	numDrawSurfs = backEnd.viewDef->numDrawSurfs;
 
+	// the performance logs split a 3D view into its passes; a 2D view is one pass
+	const bool perfPasses = ( backEnd.viewDef->viewEntitys != NULL );
+	idPerfPassScope perfPass( perfPasses ? PERFPASS_OTHER : PERFPASS_GUI );
+
 	// If we have a backend rendertexture, assign it here.
 	if (backEnd.renderTexture)
 	{
@@ -2978,22 +2986,41 @@ void	RB_STD_DrawView( void ) {
 
 	// fill the depth buffer and clear color buffer to black except on
 	// subviews
+	if ( perfPasses ) {
+		RB_SetPerfPass( PERFPASS_DEPTH );
+	}
 	RB_STD_FillDepthBuffer( drawSurfs, numDrawSurfs );
 
 	// main light renderer
+	if ( perfPasses ) {
+		RB_SetPerfPass( PERFPASS_INTERACTIONS );
+	}
 	RB_ARB2_DrawInteractions();
 
 	// disable stencil shadow test
 	glStencilFunc( GL_ALWAYS, 128, 255 );
 
 	// uplight the entire screen to crutch up not having better blending range
+	if ( perfPasses ) {
+		RB_SetPerfPass( PERFPASS_OTHER );
+	}
 	RB_STD_LightScale();
 
 	// now draw any non-light dependent shading passes
+	if ( perfPasses ) {
+		RB_SetPerfPass( PERFPASS_AMBIENT );
+	}
 	int	processed = RB_STD_DrawShaderPasses( drawSurfs, numDrawSurfs );
 
 	// fob and blend lights
+	if ( perfPasses ) {
+		RB_SetPerfPass( PERFPASS_FOG );
+	}
 	RB_STD_FogAllLights();
+
+	if ( perfPasses ) {
+		RB_SetPerfPass( PERFPASS_POST );
+	}
 
 	// Apply SSAO before bloom and tonemapping so indirect shadowing modulates the lit scene.
 	RB_STD_SSAO();
@@ -3006,7 +3033,14 @@ void	RB_STD_DrawView( void ) {
 		RB_STD_DrawShaderPasses( drawSurfs+processed, numDrawSurfs-processed );
 	}
 
+	if ( perfPasses ) {
+		RB_SetPerfPass( PERFPASS_OTHER );
+	}
 	RB_RenderDebugTools( drawSurfs, numDrawSurfs );
+
+	if ( perfPasses ) {
+		RB_SetPerfPass( PERFPASS_POST );
+	}
 	RB_STD_GlowOverlay( drawSurfs, numDrawSurfs );
 
 // jmarshall - stupid OpenGL

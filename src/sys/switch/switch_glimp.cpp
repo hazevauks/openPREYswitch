@@ -46,6 +46,74 @@ the next vid_restart.
 */
 static idCVar r_switchGLThread( "r_switchGLThread", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "Mesa GLthread (Mesa 26 build only): run the GL driver on its own core; applies on vid_restart" );
 
+/*
+GL driver and driver options (Mesa 26 port only; devkitPro Mesa ignores them).
+Both are read when the display is created.
+
+r_switchGLDriver 1 runs OpenGL through Zink on the NVK Vulkan driver instead
+of nouveau's own GL driver (NVC0). It needs the unified Mesa SDK, which has
+both.
+
+r_switchMesaEnv hands environment variables to the driver, as
+"NAME=value;NAME=value", to compare its options without a rebuild.
+
+The choice is saved with the config, so a driver that cannot start would leave
+no way back. While a driver other than NVC0 runs, a marker file exists; a
+normal GL shutdown removes it. Finding it at startup means the last session
+with that driver crashed, hung or was closed from HOME, and NVC0 comes back.
+*/
+static idCVar r_switchGLDriver( "r_switchGLDriver", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "GL driver (Mesa 26 build only): 0 = NVC0 (nouveau), 1 = Zink on the NVK Vulkan driver; applies at the next start", 0, 1 );
+static idCVar r_switchMesaEnv( "r_switchMesaEnv", "", CVAR_RENDERER | CVAR_ARCHIVE, "environment variables for the Mesa driver (Mesa 26 build only), as NAME=value;NAME=value; applies at the next start" );
+
+#define SWITCH_GL_DRIVER_MARKER		SWITCH_BASE_PATH "/basepr/gl_driver_trial.txt"
+
+static int		s_mesaMajor = 0;		// from GL_VERSION
+
+bool Switch_GLDriverChoice( void ) {
+	return s_mesaMajor >= 26;
+}
+
+static void GLimp_SelectDriver( void ) {
+	bool zink = ( r_switchGLDriver.GetInteger() == 1 );
+	if ( zink ) {
+		FILE *marker = fopen( SWITCH_GL_DRIVER_MARKER, "rb" );
+		if ( marker ) {
+			// stays until GL shuts down normally, so the fallback holds even if this session fails too
+			fclose( marker );
+			common->Printf( "GL driver: the last start with Zink did not end normally; back to NVC0\n" );
+			r_switchGLDriver.SetInteger( 0 );
+			zink = false;
+		} else {
+			marker = fopen( SWITCH_GL_DRIVER_MARKER, "wb" );
+			if ( marker ) {
+				fputs( "OpenPrey started with r_switchGLDriver 1 (Zink) and has not shut GL down yet.\n", marker );
+				fclose( marker );
+			}
+		}
+	}
+	setenv( "MESA_SWITCH_GL_DRIVER", zink ? "zink" : "nvc0", 1 );
+
+	// NAME=value;NAME=value
+	idStr env = r_switchMesaEnv.GetString();
+	while ( env.Length() > 0 ) {
+		idStr entry = env;
+		const int end = env.Find( ';' );
+		if ( end >= 0 ) {
+			entry = env.Left( end );
+			env = env.Right( env.Length() - end - 1 );
+		} else {
+			env.Clear();
+		}
+		const int equals = entry.Find( '=' );
+		if ( equals > 0 ) {
+			const idStr name = entry.Left( equals );
+			const idStr value = entry.Right( entry.Length() - equals - 1 );
+			setenv( name.c_str(), value.c_str(), 1 );
+			common->Printf( "Mesa environment: %s=%s\n", name.c_str(), value.c_str() );
+		}
+	}
+}
+
 static void GLimp_ApplySwapInterval( void ) {
 	const int interval = idMath::ClampInt( 0, Max( 1, (int)s_maxSwapInterval ), r_swapInterval.GetInteger() );
 	eglSwapInterval( s_display, interval );
@@ -78,6 +146,7 @@ bool GLimp_Init( glimpParms_t parms ) {
 
 	// read by the Mesa 26 port (-Dswitch_mesa_sdk) at context creation; devkitPro Mesa ignores it
 	setenv( "MESA_SWITCH_GLTHREAD", r_switchGLThread.GetBool() ? "1" : "0", 1 );
+	GLimp_SelectDriver();
 
 	s_display = eglGetDisplay( EGL_DEFAULT_DISPLAY );
 	if ( s_display == EGL_NO_DISPLAY || !eglInitialize( s_display, NULL, NULL ) ) {
@@ -143,6 +212,10 @@ bool GLimp_Init( glimpParms_t parms ) {
 	common->Printf( "GL: %s | %s | %s\n", (const char *)glGetString( GL_VENDOR ),
 		(const char *)glGetString( GL_RENDERER ), (const char *)glGetString( GL_VERSION ) );
 
+	// "4.3 (Compatibility Profile) Mesa 20.1.0"
+	const char *mesa = strstr( (const char *)glGetString( GL_VERSION ), "Mesa " );
+	s_mesaMajor = mesa ? atoi( mesa + 5 ) : 0;
+
 	if ( !eglGetConfigAttrib( s_display, config, EGL_MAX_SWAP_INTERVAL, &s_maxSwapInterval ) ) {
 		s_maxSwapInterval = 1;
 	}
@@ -171,6 +244,8 @@ bool GLimp_SetScreenParms( glimpParms_t parms ) {
 void GLimp_Shutdown( void ) {
 	common->Printf( "Shutting down OpenGL subsystem\n" );
 	GLimp_DestroyEGL();
+	// the driver ran and ended normally (GLimp_SelectDriver)
+	remove( SWITCH_GL_DRIVER_MARKER );
 }
 
 /*
